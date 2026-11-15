@@ -12,7 +12,7 @@ const MODELS = [
   { id: 'gemini-3.1-flash-lite', in: 0.25, out: 1.5 },
   { id: 'gemini-3.1-pro-preview', in: 2, out: 12 },
 ];
-const TABS = [['prompt', '프롬프트'], ['kb', '로어북'], ['start', '시작상황'], ['preview', '미리보기'], ['ideas', '아이디어'], ['mind', '마인드맵'], ['info', '작품 정보']];
+const TABS = [['prompt', '프롬프트'], ['kb', '로어북'], ['start', '시작상황'], ['subs', '치환 규칙'], ['preview', '미리보기'], ['ideas', '아이디어'], ['mind', '마인드맵'], ['info', '작품 정보']];
 
 // ───────── 유틸 ─────────
 const $ = (s, r = document) => r.querySelector(s);
@@ -48,10 +48,10 @@ const DB = {
 
 // ───────── 상태 ─────────
 let S = null;
-const ui = { tab: 'prompt', kbTest: '', mmSel: null, undo: [] };
+const ui = { subScope: { sec: true, kb: true, st: true }, tab: 'prompt', kbTest: '', mmSel: null, undo: [] };
 const aiUI = { open: false, tab: 'chat', busy: false, ctx: { main: true, kb: true, start: true, ideas: false }, cmp: null, cmpTarget: '', cmpLevel: '중', draft: '' };
 
-function newVersion(name = '버전 1') { return { id: uid(), name, memo: '', created: now(), updated: now(), joinBlank: false, intent: '', sections: [], kb: [], starts: [] }; }
+function newVersion(name = '버전 1') { return { id: uid(), name, memo: '', created: now(), updated: now(), joinBlank: false, intent: '', sections: [], kb: [], starts: [], subs: [] }; }
 function newWork(title = '새 작품') {
   const v = newVersion(); v.sections.push({ id: uid(), label: '', text: '# 역할\n', on: true });
   return { id: uid(), title, desc: '', thumb: '', created: now(), updated: now(), curVer: v.id, versions: [v], notes: [], mind: null, chat: [] };
@@ -84,6 +84,7 @@ function normVer(v) {
   v.id = v.id || uid(); v.name = v.name || '버전'; v.sections = (v.sections || []).map(s => ({ id: s.id || uid(), label: s.label || '', text: s.text || '', on: s.on !== false }));
   v.kb = (v.kb || []).map(k => ({ id: k.id || uid(), name: k.name || '', triggers: (k.triggers || []).slice(0, L.TRG), text: k.text || '', on: k.on !== false }));
   v.starts = (v.starts || []).map(t => ({ id: t.id || uid(), name: t.name || '', text: t.text || '', sub: t.sub || '' }));
+  v.subs = (v.subs || []).map(r => ({ id: r.id || uid(), long: r.long || '', short: r.short || '', bulk: r.bulk !== false }));
   v.intent = v.intent || ''; v.memo = v.memo || ''; return v;
 }
 const W = () => S.works.find(w => w.id === S.workId) || null;
@@ -120,17 +121,22 @@ function render() {
   const tabs = $('#tabs'); tabs.hidden = !w;
   if (w) {
     const n = mainText(v).length;
-    const badge = { prompt: `<span class="badge num ${n > L.MAIN ? 'over' : ''}" id="tabMain">${nf(n)}</span>`, kb: `<span class="badge num">${v.kb.length}/${L.KBN}</span>`, start: `<span class="badge num">${v.starts.length}/${L.STN}</span>` };
+    const badge = { prompt: `<span class="badge num ${n > L.MAIN ? 'over' : ''}" id="tabMain">${nf(n)}</span>`, kb: `<span class="badge num">${v.kb.length}/${L.KBN}</span>`, start: `<span class="badge num">${v.starts.length}/${L.STN}</span>`, subs: `<span class="badge num">${v.subs.length}</span>` };
     tabs.innerHTML = TABS.map(([k, t]) => `<button data-act="tab" data-id="${k}" class="${ui.tab === k ? 'on' : ''}">${t}${badge[k] || ''}</button>`).join('');
   }
   const m = $('#main');
   if (!w) m.innerHTML = viewLibrary();
-  else m.innerHTML = ({ prompt: viewPrompt, kb: viewKB, start: viewStart, preview: viewPreview, ideas: viewIdeas, mind: viewMind, info: viewInfo }[ui.tab] || viewPrompt)(w, v);
+  else m.innerHTML = ({ prompt: viewPrompt, kb: viewKB, start: viewStart, subs: viewSubs, preview: viewPreview, ideas: viewIdeas, mind: viewMind, info: viewInfo }[ui.tab] || viewPrompt)(w, v);
   $$('textarea.auto', m).forEach(grow);
   if (w && ui.tab === 'prompt') sortable($('#navlist'), '.navgrp', ids => { reorder(v.sections, ids); save(); render(); });
   if (w && ui.tab === 'kb') sortable($('#kblist'), '.card', ids => { reorder(v.kb, ids); save(); render(); });
   if (w && ui.tab === 'mind') { mmBind(); mmDraw(); }
   if (aiUI.open) renderAI();
+}
+// 입력 칸을 옮겨 다니는 도중에 다시 그려도 포커스를 잃지 않게 한다
+function softRender() {
+  setTimeout(() => { const f = document.activeElement, key = f && f.dataset && f.dataset.in ? `[data-in="${f.dataset.in}"][data-id="${f.dataset.id}"]` : null, pos = key ? [f.selectionStart, f.selectionEnd] : null;
+    render(); if (key) { const n = $(key); if (n) { n.focus(); try { n.setSelectionRange(pos[0], pos[1]); } catch (e) { /* 무시 */ } } } }, 0);
 }
 function reorder(arr, ids) { const by = Object.fromEntries(arr.map(x => [x.id, x])); const next = ids.map(i => by[i]).filter(Boolean); arr.splice(0, arr.length, ...next); }
 
@@ -249,6 +255,75 @@ function viewInfo(w, v) {
       <label class="f">의도 메모 (현재 버전) — AI 검수가 결함으로 지적하지 않았으면 하는, 일부러 그렇게 쓴 부분을 적어 두세요
         <textarea rows="4" data-in="ver.intent" style="font-family:var(--font)" placeholder="예: MEM 주석은 일부러 중문 간체로만 출력하게 했음 / 선택지 넘기기 금지는 의도된 강한 표현임">${esc(v.intent)}</textarea></label>
       <div class="row"><button class="btn" data-act="vers">버전 관리</button><button class="btn" data-act="workExport" data-id="${w.id}">이 작품만 파일로 내보내기</button></div></div></div></div>`;
+}
+
+// ───────── 치환 규칙 ─────────
+// 규칙 = { long: 원래 표현(예: {{user}}, 대헌), short: 기호(예: 🅄, 🄳) }. 버전마다 따로 저장한다.
+// "선언"은 프롬프트 안의 `원래표현=기호` 글자 그대로를 말하며, 통일·변환 때 선언 자체는 건드리지 않는다.
+const reEsc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const declRe = r => new RegExp(reEsc(r.long) + '\\s*=\\s*' + reEsc(r.short) + '|' + reEsc(r.short) + '\\s*=\\s*' + reEsc(r.long), 'g');
+const subOk = r => r.long && r.short && r.long !== r.short;
+// 한글로 시작하는 표현은 바로 앞 글자가 한글이면 다른 낱말의 일부("안대헌" 속 "대헌")로 보고 건드리지 않는다.
+const fromRe = x => new RegExp((/^[가-힣]/.test(x) ? '(?<![가-힣])' : '') + reEsc(x), 'g');
+function subApply(text, r, toShort) {
+  const from = fromRe(toShort ? r.long : r.short), to = toShort ? r.short : r.long, d = declRe(r); let out = '', last = 0, m;
+  while ((m = d.exec(text))) { out += text.slice(last, m.index).replace(from, () => to) + m[0]; last = m.index + m[0].length; }
+  return out + text.slice(last).replace(from, () => to);
+}
+const subTargets = () => cmpTargets().filter(t => ui.subScope[t.key.split(':')[0]]);
+function subCount(r) { // 선언을 뺀 나머지에서 각 표현이 몇 번 쓰였는지
+  let long = 0, short = 0, decl = 0; if (!subOk(r)) return { long, short, decl };
+  for (const t of cmpTargets()) { const raw = t.get(); decl += (raw.match(declRe(r)) || []).length; if (!ui.subScope[t.key.split(':')[0]]) continue; const x = raw.replace(declRe(r), ''); long += (x.match(fromRe(r.long)) || []).length; short += (x.match(fromRe(r.short)) || []).length; }
+  return { long, short, decl };
+}
+const SYM_RE = /^[\p{Extended_Pictographic}\u{1F100}-\u{1F1FF}\u2460-\u24FF\uFE0F\u200D]+$/u;
+function subDetect(v) { // 프롬프트에서 `A=B` 꼴 중 한쪽만 기호(또는 {{...}})인 것을 규칙 후보로 찾는다
+  const tok = '(\\{\\{[^}\\n]{1,20}\\}\\}|[^\\s=\\/·,;:()\\[\\]|<>"\'`~\\-.!?]{1,12})', re = new RegExp(tok + '\\s?=\\s?' + tok, 'gu'), found = [], seen = new Set(v.subs.map(r => r.long + '\u0001' + r.short));
+  for (const t of cmpTargets()) { let m; const text = t.get(); re.lastIndex = 0; while ((m = re.exec(text))) {
+    const a = m[1], b = m[2], as = SYM_RE.test(a), bs = SYM_RE.test(b); if (a === b || as === bs) { if (m.index === re.lastIndex) re.lastIndex++; continue; }
+    const r = as ? { long: b, short: a } : { long: a, short: b }, k = r.long + '\u0001' + r.short; if (/[≠.!?]/.test(r.long)) continue; if (!seen.has(k)) { seen.add(k); found.push(r); } } }
+  const braced = new Set([...v.subs, ...found].filter(r => /^\{\{/.test(r.long)).map(r => r.short));
+  return found.filter(r => /^\{\{/.test(r.long) || !braced.has(r.short));
+}
+function subRunAll(rules, toShort, label) {
+  rules = rules.filter(subOk); if (!rules.length) { toast('바꿀 규칙이 없습니다'); return; }
+  // 긴 표현부터 바꿔야 "안대헌" 안의 "대헌" 같은 겹침에서 긴 쪽이 먼저 처리된다
+  rules = rules.slice().sort((a, b) => (toShort ? b.long.length - a.long.length : b.short.length - a.short.length));
+  let n = 0; rules.forEach(r => { const c = subCount(r); n += toShort ? c.long : c.short; });
+  if (!n) { toast('바꿀 곳이 없습니다. 이미 통일되어 있습니다'); return; }
+  if (!confirm(`${label}\n\n모두 ${n}곳을 바꿉니다. (규칙을 선언한 부분은 그대로 둡니다)\n바꾼 뒤에도 위쪽 "되돌리기"로 되돌릴 수 있습니다.`)) return;
+  const before = mainText(V()).length; snap(label);
+  for (const t of subTargets()) { let x = t.get(); for (const r of rules) x = subApply(x, r, toShort); if (x !== t.get()) t.set(x); }
+  save(); render(); const diff = before - mainText(V()).length; toast(`${n}곳을 바꿨습니다. 메인 프롬프트 ${diff >= 0 ? nf(diff) + '자 줄었습니다' : nf(-diff) + '자 늘었습니다'}`, 4000);
+}
+function subDeclare(r) { // 선언을 프롬프트에 넣는다: 다른 규칙의 선언이 있는 줄 끝에 붙이고, 없으면 첫 섹션 끝에 새 줄로
+  const v = V(), text = `${r.long}=${r.short}`;
+  for (const s of v.sections) { const lines = s.text.split('\n'); const i = lines.findIndex(l => v.subs.some(o => o !== r && subOk(o) && declRe(o).test(l))); if (i >= 0) { lines[i] += '/' + text; s.text = lines.join('\n'); return secLabel(s); } }
+  const s = v.sections.find(x => x.on) || v.sections[0]; if (!s) return null; s.text = s.text.replace(/\n*$/, '') + '\n-' + text; return secLabel(s);
+}
+function viewSubs(w, v) {
+  const cand = subDetect(v), sc = ui.subScope; let save_ = 0, mixed = 0;
+  const rows = v.subs.map(r => { const c = subCount(r), ok = subOk(r); if (ok && r.bulk) save_ += c.long * (r.long.length - r.short.length); if (ok && c.long && c.short) mixed++;
+    return `<section class="card" data-id="${r.id}"><div class="card-h subrow">
+      <input type="text" class="sub-in" data-in="sub.long" data-id="${r.id}" value="${esc(r.long)}" placeholder="원래 표현 (예: {{user}})" aria-label="원래 표현"><b>=</b>
+      <input type="text" class="sub-in short" data-in="sub.short" data-id="${r.id}" value="${esc(r.short)}" placeholder="기호 (예: 🅄)" aria-label="기호">
+      <span class="grow"></span>${ok ? `${c.long && c.short ? '<span class="pill warn">혼용</span>' : c.long || c.short ? '<span class="pill ok">통일됨</span>' : '<span class="pill">미사용</span>'}<span class="pill ${c.decl ? '' : 'warn'}">${c.decl ? '선언 있음' : '선언 없음'}</span>` : '<span class="pill warn">양쪽을 모두 채워 주세요</span>'}
+      <label class="sw" title="끄면 '전체를 기호로 통일'에서 빠집니다. 일부 구역에서만 쓰는 기호(예: 주석 전용 ID)는 꺼 두세요."><input type="checkbox" data-in="sub.bulk" data-id="${r.id}" ${r.bulk ? 'checked' : ''}>전체 통일에 포함</label>
+      <button class="icon" data-act="subDel" data-id="${r.id}">삭제</button></div>
+      ${ok ? `<div class="pad"><div class="row">
+        <button class="btn sm" data-act="subFind" data-t="${esc(r.long)}" title="쓰인 곳 모아 보기">원래 표현 <b class="num">${c.long}</b>곳</button>
+        <button class="btn sm" data-act="subFind" data-t="${esc(r.short)}" title="쓰인 곳 모아 보기">기호 <b class="num">${c.short}</b>곳</button><span class="grow"></span>
+        <button class="btn sm accent" data-act="subOne" data-id="${r.id}" data-d="1" ${c.long ? '' : 'disabled'}>기호로 통일${c.long && r.long.length !== r.short.length ? ` (${r.long.length > r.short.length ? '−' : '+'}${Math.abs(c.long * (r.long.length - r.short.length))}자)` : ''}</button>
+        <button class="btn sm" data-act="subOne" data-id="${r.id}" data-d="0" ${c.short ? '' : 'disabled'}>원래 표현으로 풀기</button>
+        ${c.decl ? '' : `<button class="btn sm" data-act="subDecl" data-id="${r.id}">선언을 프롬프트에 넣기</button>`}</div></div>` : ''}</section>`; }).join('');
+  return `<div class="head"><h2>치환 규칙</h2><span class="hint">긴 표현을 짧은 기호로 바꿔 쓰는 약속을 모아 보고, 프롬프트 전체를 한쪽으로 통일합니다.</span><span class="grow"></span><button class="btn accent" data-act="subAdd">+ 규칙</button></div>
+  ${cand.length ? `<div class="card"><div class="pad"><div class="row"><b>프롬프트에서 찾은 규칙 ${cand.length}개</b><span class="hint">아직 목록에 없는 것만 보입니다. 범례(예: 장면 표시 이모지)도 섞여 있을 수 있으니 필요한 것만 추가하세요.</span><span class="grow"></span><button class="btn sm" data-act="subTakeAll">모두 추가</button></div>
+    <div class="chips">${cand.map((r, i) => `<span class="chip">${esc(r.long)} = ${esc(r.short)}<button data-act="subTake" data-id="${i}" title="규칙으로 추가">＋</button></span>`).join('')}</div></div></div>` : ''}
+  <div class="card"><div class="pad"><div class="row"><span class="hint">바꿀 범위</span>${[['sec', '메인 프롬프트'], ['kb', '로어북'], ['st', '시작상황']].map(([k, t]) => `<label class="sw"><input type="checkbox" data-in="sub.scope" data-id="${k}" ${sc[k] ? 'checked' : ''}>${t}</label>`).join('')}<span class="grow"></span>
+    <button class="btn accent" data-act="subAll" data-d="1" ${v.subs.length ? '' : 'disabled'}>전체를 기호로 통일${save_ ? ` (약 ${save_ >= 0 ? '−' : '+'}${nf(Math.abs(save_))}자)` : ''}</button><button class="btn" data-act="subAll" data-d="0" ${v.subs.length ? '' : 'disabled'}>전체를 원래 표현으로 풀기</button><button class="btn" data-act="subCopy" ${v.subs.length ? '' : 'disabled'}>선언 줄 복사</button></div>
+    ${mixed ? `<div class="note warn">${mixed}개 규칙에서 원래 표현과 기호가 섞여 쓰이고 있습니다.</div>` : ''}
+    <span class="hint">"전체 통일"은 "전체 통일에 포함"을 켠 규칙만 바꿉니다. 한글 낱말은 다른 낱말의 일부일 때(예: "안대헌" 속 "대헌") 건드리지 않습니다. 개수를 눌러 쓰인 곳을 먼저 확인하세요.</span></div></div>
+  ${rows || '<div class="note">규칙이 없습니다. 위에서 찾은 규칙을 추가하거나 "+ 규칙"으로 직접 만드세요.</div>'}`;
 }
 
 // ───────── 끌어서 순서 바꾸기(마우스·터치 공용) ─────────
@@ -382,6 +457,7 @@ function buildContext() {
   if (c.kb) { o += `\n===== 로어북 (${v.kb.length}/${L.KBN}슬롯) =====\n`; v.kb.forEach((k, i) => o += `--- 슬롯 ${i + 1}: ${k.name} | 트리거: ${k.triggers.join(', ') || '없음'} | ${k.text.length}/${L.KBC}자${k.on ? '' : ' · 꺼 둠'} ---\n${k.text}\n`); }
   if (c.start) { o += `\n===== 시작상황 =====\n`; v.starts.forEach((s, i) => o += `--- 시작상황 ${i + 1}: ${s.name} (${s.text.length}/${L.STC}자) ---\n${s.text}\n[서브 컨텍스트 ${s.sub.length}/${L.SUB}자]\n${s.sub}\n`); }
   if (c.ideas) { o += `\n===== 아이디어 노트 =====\n` + w.notes.map(n => '- ' + n.text).join('\n') + `\n===== 마인드맵 =====\n` + outline(w); }
+  if (v.subs.some(subOk)) o += `\n===== 치환 규칙 (원래 표현=기호) =====\n` + v.subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ') + '\n';
   o += `\n===== 의도 메모 (제작자가 일부러 한 것 — 결함으로 지적 금지) =====\n${v.intent || '(없음)'}\n`; return o;
 }
 const QUICK = [
@@ -433,7 +509,7 @@ async function runCompress() {
   const t = cmpTargets().find(x => x.key === aiUI.cmpTarget); if (!t || aiUI.busy) return; const before = t.get(); if (!before.trim()) { toast('비어 있는 항목입니다'); return; }
   aiUI.busy = true; aiUI.cmp = null; renderAI();
   try {
-    const r = await gemini({ system: SYS_CMP(aiUI.cmpLevel), contents: [{ role: 'user', parts: [{ text: `아래 텍스트를 압축하라. 현재 ${before.length}자.\n<<<원문>>>\n${before}\n<<<원문 끝>>>` }] }], temp: 0.3, kind: '압축' });
+    const r = await gemini({ system: SYS_CMP(aiUI.cmpLevel), contents: [{ role: 'user', parts: [{ text: `아래 텍스트를 압축하라. 현재 ${before.length}자.${V().subs.some(subOk) ? '\n이 작품의 치환 규칙(원래 표현=기호): ' + V().subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ') + ' — 원래 표현이 나오면 기호로 바꾸고, 이 기호들은 다른 것으로 바꾸지 않는다.' : ''}\n<<<원문>>>\n${before}\n<<<원문 끝>>>` }] }], temp: 0.3, kind: '압축' });
     const m = r.text.match(/<<<압축>>>\n?([\s\S]*?)\n?<<<끝>>>/); const after = (m ? m[1] : r.text).replace(/^```[^\n]*\n|\n```$/g, ''); const notes = m ? r.text.slice(r.text.indexOf('<<<끝>>>') + 7).trim() : '';
     aiUI.cmp = { key: t.key, label: t.label, before, after, notes, usage: r.usage };
   } catch (e) { aiUI.cmp = { err: e.message }; }
@@ -681,6 +757,15 @@ const A = {
   cmpDrop() { aiUI.cmp = null; renderAI(); },
   useReset() { if (!confirm('사용량 기록을 지울까요?')) return; S.usage = { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] }; save(); renderAI(); },
   hit(el) { const h = ui.hits[+el.dataset.id]; jump(h.go, h.i, h.len); },
+  subAdd() { const r = { id: uid(), long: '', short: '', bulk: true }; V().subs.unshift(r); save(); render(); const f = $(`[data-in="sub.long"][data-id="${r.id}"]`); f && f.focus(); },
+  subDel(el) { const a = V().subs; a.splice(a.findIndex(r => r.id === el.dataset.id), 1); save(); render(); },
+  subTake(el) { const r = subDetect(V())[+el.dataset.id]; if (r) { V().subs.push({ id: uid(), ...r, bulk: /^\{\{/.test(r.long) }); save(); render(); } },
+  subTakeAll() { subDetect(V()).forEach(r => V().subs.push({ id: uid(), ...r, bulk: /^\{\{/.test(r.long) })); save(); render(); },
+  subFind(el) { ui.q = el.dataset.t; openSearch(); },
+  subOne(el) { const r = find(V().subs, el.dataset.id), d = el.dataset.d === '1'; subRunAll([r], d, d ? `"${r.long}" → "${r.short}" 로 통일` : `"${r.short}" → "${r.long}" 로 풀기`); },
+  subAll(el) { const d = el.dataset.d === '1'; subRunAll(V().subs.filter(r => r.bulk), d, d ? '모든 규칙을 기호로 통일' : '모든 규칙을 원래 표현으로 풀기'); },
+  subDecl(el) { const r = find(V().subs, el.dataset.id); snap('치환 선언 넣기'); const where = subDeclare(r); save(); render(); toast(where ? `"${where}" 섹션에 ${r.long}=${r.short} 선언을 넣었습니다` : '선언을 넣을 섹션이 없습니다', 4000); },
+  subCopy() { copy('-' + V().subs.filter(subOk).map(r => `${r.long}=${r.short}`).join('/'), '선언 줄을 복사했습니다'); },
   updCheck() { checkUpdate(true); }, updGet() { openExternal(upd.url); }, updHide() { $('#updbar').hidden = true; }, updInstall() { if (window.desktop) window.desktop.install(); },
 };
 
@@ -704,6 +789,7 @@ document.addEventListener('input', e => {
   if (k === 'sec.text') { const s = find(v.sections, id); s.text = t.value; $$(`[data-cnt="${id}"]`).forEach(x => x.textContent = nf(s.text.length)); $$(`[data-cnt2="${id}"]`).forEach(x => x.textContent = nf(s.text.length) + '자'); if (!s.label) { const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); } const sig = subSig(s); if (t._sig === undefined) t._sig = sig; if (t._sig !== sig || /^## /m.test(s.text)) { t._sig = sig; $('#navlist').innerHTML = navHTML(v); } refreshMain(); }
   else if (k === 'sec.label') { const s = find(v.sections, id); s.label = t.value; const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); }
   else if (k === 'kb.name') find(v.kb, id).name = t.value;
+  else if (k === 'sub.long' || k === 'sub.short') find(v.subs, id)[k.slice(4)] = t.value;
   else if (k === 'kb.text') { const s = find(v.kb, id); s.text = t.value; const c = $(`[data-kcnt="${id}"]`); c.textContent = `${s.text.length}/${L.KBC}`; c.className = 'cnt num ' + cntCls(s.text.length, L.KBC); }
   else if (k === 'st.name') find(v.starts, id).name = t.value;
   else if (k === 'st.text' || k === 'st.sub') { const f = k.slice(3), s = find(v.starts, id), max = f === 'text' ? L.STC : L.SUB; s[f] = t.value; const c = $(`[data-scnt="${id}:${f}"]`); c.textContent = `${s[f].length}/${max}`; c.className = 'cnt num ' + cntCls(s[f].length, max); }
@@ -724,6 +810,9 @@ document.addEventListener('change', e => {
   else if (k === 'sec.on') { find(v.sections, t.dataset.id).on = t.checked; save(); render(); }
   else if (k === 'kb.on') { find(v.kb, t.dataset.id).on = t.checked; save(); render(); }
   else if (k === 'ai.ctx') aiUI.ctx[t.dataset.id] = t.checked;
+  else if (k === 'sub.bulk') { find(v.subs, t.dataset.id).bulk = t.checked; save(); render(); }
+  else if (k === 'sub.scope') { ui.subScope[t.dataset.id] = t.checked; render(); }
+  else if (k === 'sub.long' || k === 'sub.short') softRender();
   else if (k === 'cmp.lv') aiUI.cmpLevel = t.value;
   else if (t.id === 'filePick' && t.files[0]) { const r = new FileReader(); r.onload = () => importText(String(r.result)); r.readAsText(t.files[0]); }
   else if (t.id === 'imgPick' && t.files[0]) {

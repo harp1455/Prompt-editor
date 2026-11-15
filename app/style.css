@@ -248,3 +248,9 @@ body{background:radial-gradient(1100px 520px at 8% -8%,var(--tint-a),transparent
 .navlist{grid-template-columns:minmax(0,1fr)}
 .navgrp{min-width:0}
 @media (max-width:820px){.navlist{display:flex}.secnav{overflow-x:visible}}
+
+/* 치환 규칙 */
+.subrow .sub-in{width:auto;flex:1 1 150px;max-width:260px;font-family:var(--mono)}
+.subrow .sub-in.short{flex:0 1 110px}
+.pill{font-size:12px;padding:2px 9px;border-radius:10px;background:var(--sunk);color:var(--muted);white-space:nowrap}
+.pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.ok{background:var(--accent-soft);color:var(--accent)}
