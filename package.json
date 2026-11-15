@@ -1,0 +1,33 @@
+{
+  "name": "crack-prompt-studio",
+  "version": "1.0.0",
+  "description": "크랙 캐릭터 채팅 프롬프트 제작 도구",
+  "author": "harp1455",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "@capacitor/share": "^7.0.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.crackprompt.studio",
+    "productName": "Crack Prompt Studio",
+    "files": ["app/**/*", "electron/**/*", "package.json"],
+    "publish": [{ "provider": "github", "owner": "harp1455", "repo": "Prompt-editor", "releaseType": "release" }],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "build/icon.png" },
+    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "CrackPromptStudio-Setup-${version}.${ext}" }
+  }
+}
