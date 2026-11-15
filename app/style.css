@@ -369,3 +369,32 @@ label.f{grid-template-columns:minmax(0,1fr)}
 
 /* 설정 창: 좁은 화면에서 나란한 입력칸이 너무 좁아지면 줄을 바꾼다 */
 .dlg .row>label.f{min-width:130px}
+
+/* ───────── 항목 메모 (프롬프트에 들어가지 않는 주석) ───────── */
+.memo{background:var(--warn-soft);border-bottom:1px solid var(--line)}
+.card .memo textarea{border:0;border-radius:0;background:none;padding:8px 12px;font:13.5px/1.55 var(--font);color:var(--ink);min-height:36px}
+.card .memo textarea::placeholder{color:var(--warn);opacity:.75}
+.memob.has{color:var(--warn);font-weight:600}
+.memob.has::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--warn);margin-left:4px;vertical-align:middle}
+.memo-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--warn)}
+
+/* ───────── 섹션 접기 ───────── */
+.foldb{padding:4px 6px;font-size:13px}
+.card.fold>textarea,.card.fold>.memo,.card.fold [data-act=secSplit],.card.fold [data-act=secMerge],.card.fold [data-act=secCompress],.card.fold [data-act=secCopy],.card.fold [data-act=secDel]{display:none}
+.card.fold .card-h{border-bottom-color:transparent}
+
+/* ───────── 버전 비교 ───────── */
+.diff{border:1px solid var(--line);border-radius:var(--r);background:var(--sunk);font:13px/1.6 var(--mono);max-height:52vh;overflow:auto;padding:4px 0}
+.dl{display:flex;gap:6px;padding:0 10px;white-space:pre-wrap;word-break:break-word}
+.dl>i{flex:none;width:1em;font-style:normal;color:var(--muted);user-select:none}
+.dl>span{min-width:0;flex:1}
+.dl.add{background:var(--accent-soft)} .dl.add>i{color:var(--accent)}
+.dl.del{background:var(--bad-soft)} .dl.del>i{color:var(--bad)}
+.dl.add mark{background:var(--accent);color:var(--accent-ink);border-radius:3px}
+.dl.del mark{background:var(--bad);color:var(--surface);border-radius:3px}
+.dl.gap{justify-content:center;color:var(--muted);font-family:var(--font);font-size:12px;padding:2px 10px}
+.dlg>.dl{border-radius:8px;padding:4px 10px;font-size:13.5px}
+.dl-k{display:inline-block;width:1.4em;text-align:center;border-radius:4px}.dl-k.add{background:var(--accent-soft);color:var(--accent)}.dl-k.del{background:var(--bad-soft);color:var(--bad)}
+.dlg details{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.dlg details summary{cursor:pointer;font-size:13.5px}
+.dlg details .diff{margin-top:6px}

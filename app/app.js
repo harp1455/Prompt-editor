@@ -100,7 +100,7 @@ const DB = {
 
 // ───────── 상태 ─────────
 let S = null;
-const ui = { subScope: { sec: true, kb: true, st: true }, tab: 'prompt', kbTest: '', mmSel: null, undo: [] };
+const ui = { subScope: { sec: true, kb: true, st: true }, tab: 'prompt', kbTest: '', mmSel: null, undo: [], memoShow: {} };
 const aiUI = { open: false, tab: 'chat', busy: false, ctx: { main: true, kb: true, start: true, ideas: false }, cmp: null, cmpTarget: '', cmpLevel: '중', draft: '' };
 
 function newVersion(name = '버전 1') { return { id: uid(), name, memo: '', created: now(), updated: now(), joinBlank: false, intent: '', sections: [], kb: [], starts: [], subs: [], rules: { auto: true, by: {} } }; }
@@ -133,9 +133,9 @@ function normWork(w) {
   return w;
 }
 function normVer(v) {
-  v.id = v.id || uid(); v.name = v.name || '버전'; v.sections = (v.sections || []).map(s => ({ id: s.id || uid(), label: s.label || '', text: s.text || '', on: s.on !== false }));
-  v.kb = (v.kb || []).map(k => ({ id: k.id || uid(), name: k.name || '', triggers: (k.triggers || []).slice(0, L.TRG), text: k.text || '', on: k.on !== false }));
-  v.starts = (v.starts || []).map(t => ({ id: t.id || uid(), name: t.name || '', text: t.text || '', sub: t.sub || '' }));
+  v.id = v.id || uid(); v.name = v.name || '버전'; v.sections = (v.sections || []).map(s => ({ id: s.id || uid(), label: s.label || '', text: s.text || '', on: s.on !== false, memo: s.memo || '', fold: !!s.fold }));
+  v.kb = (v.kb || []).map(k => ({ id: k.id || uid(), name: k.name || '', triggers: (k.triggers || []).slice(0, L.TRG), text: k.text || '', on: k.on !== false, memo: k.memo || '' }));
+  v.starts = (v.starts || []).map(t => ({ id: t.id || uid(), name: t.name || '', text: t.text || '', sub: t.sub || '', memo: t.memo || '' }));
   v.subs = (v.subs || []).map(r => ({ id: r.id || uid(), long: r.long || '', short: r.short || '', bulk: r.bulk !== false }));
   v.rules = v.rules && v.rules.by ? v.rules : { auto: true, by: {} };
   v.intent = v.intent || ''; v.memo = v.memo || ''; return v;
@@ -212,10 +212,19 @@ function viewLibrary() {
 // 섹션 = "# " 대분류. 그 안의 "## " 줄은 하위 분류로 목록에 들여 써서 보여 주고, 누르면 그 줄로 이동한다.
 function subHeads(s) { const out = []; let pos = 0; for (const l of s.text.split('\n')) { if (/^## /.test(l)) out.push({ pos, title: l.replace(/^##\s*/, '').trim().slice(0, 40) || '(소제목)' }); pos += l.length + 1; } return out; }
 const subSig = s => subHeads(s).map(h => h.title).join('\u0001');
+// ───────── 항목 메모 ─────────
+// 섹션·로어북 슬롯·시작상황마다 붙이는 제작자용 주석. 크랙에 붙이는 글(mainText, 복사, 미리보기)과 글자수에는 절대 들어가지 않는다.
+// 보이기 기본값: 내용이 있으면 펼침, 없으면 숨김. 사용자가 "메모" 단추로 바꾼 상태는 ui.memoShow 에 둔다(저장하지 않음).
+const MEMO_ARR = { sec: 'sections', kb: 'kb', st: 'starts' };
+const memoShown = x => (x.id in ui.memoShow ? ui.memoShow[x.id] : !!(x.memo && x.memo.trim()));
+const memoBtn = (kind, x) => `<button class="icon memob ${x.memo && x.memo.trim() ? 'has' : ''}" data-act="memo" data-k="${kind}" data-id="${x.id}" title="이 항목에 메모 달기 — 프롬프트와 글자수에는 들어가지 않습니다">메모</button>`;
+const memoBox = (kind, x) => memoShown(x) ? `<div class="memo"><textarea class="auto" rows="1" data-in="${kind}.memo" data-id="${x.id}" placeholder="메모 — 프롬프트에는 들어가지 않고 글자수에도 세지 않습니다" aria-label="메모">${esc(x.memo || '')}</textarea></div>` : '';
+
 function navHTML(v) {
-  return v.sections.map(s => `<div class="navgrp" data-id="${s.id}"><div class="navitem ${s.on ? '' : 'off'}" data-id="${s.id}" data-act="secGo"><span class="grip" title="끌어서 순서 변경">⋮⋮</span><span class="lbl">${esc(secLabel(s))}</span><span class="cnt num" data-cnt="${s.id}">${nf(s.text.length)}</span></div>${subHeads(s).map(h => `<div class="navsub ${s.on ? '' : 'off'}" data-act="subGo" data-id="${s.id}" data-pos="${h.pos}">${esc(h.title)}</div>`).join('')}</div>`).join('');
+  return v.sections.map(s => `<div class="navgrp" data-id="${s.id}"><div class="navitem ${s.on ? '' : 'off'}" data-id="${s.id}" data-act="secGo"><span class="grip" title="끌어서 순서 변경">⋮⋮</span><span class="lbl">${esc(secLabel(s))}</span>${s.memo && s.memo.trim() ? '<i class="memo-dot" title="메모 있음"></i>' : ''}<span class="cnt num" data-cnt="${s.id}">${nf(s.text.length)}</span></div>${subHeads(s).map(h => `<div class="navsub ${s.on ? '' : 'off'}" data-act="subGo" data-id="${s.id}" data-pos="${h.pos}">${esc(h.title)}</div>`).join('')}</div>`).join('');
 }
 function goPos(secId, pos) {
+  const s0 = find(V().sections, secId); if (s0 && s0.fold) { s0.fold = false; save(); render(); } // 접혀 있으면 펴고 간다
   const t = $(`[data-in="sec.text"][data-id="${secId}"]`); if (!t) return; const card = t.closest('.card'); card.scrollIntoView({ block: 'start' });
   const end = t.value.indexOf('\n', pos); t.focus({ preventScroll: true }); try { t.setSelectionRange(pos, end < 0 ? t.value.length : end); } catch (e) { /* 무시 */ }
   window.scrollBy(0, Math.max(0, (t.value.slice(0, pos).split('\n').length - 3) * 22)); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1200);
@@ -227,11 +236,12 @@ function viewPrompt(w, v) {
     ${meter('mainMeter', n, L.MAIN, '메인 프롬프트')}
     <div class="navlist" id="navlist">${navHTML(v)}</div>
     <div class="row"><button class="btn sm" data-act="secAdd">+ 섹션</button><button class="btn sm" data-act="secPaste">전체 붙여넣어 자동 분할</button></div>
+    <div class="row"><button class="btn sm" data-act="foldAll" data-v="1">모두 접기</button><button class="btn sm" data-act="foldAll" data-v="">모두 펴기</button></div>
     <label class="sw"><input type="checkbox" id="joinBlank" ${v.joinBlank ? 'checked' : ''}> 합칠 때 섹션 사이에 빈 줄 넣기</label>
     <span class="hint">섹션은 크랙에 붙일 때 위에서부터 순서대로 한 덩어리로 합쳐집니다. 꺼 둔 섹션은 합쳐지지 않습니다.</span>
   </aside>
-  <div id="secs">${v.sections.map((s, i) => `<section class="card ${s.on ? '' : 'off'}" id="sec-${s.id}">
-    <div class="card-h"><input class="title" type="text" data-in="sec.label" data-id="${s.id}" value="${esc(s.label)}" placeholder="${esc(secLabel(s))}" aria-label="섹션 이름">
+  <div id="secs">${v.sections.map((s, i) => `<section class="card ${s.on ? '' : 'off'} ${s.fold ? 'fold' : ''}" id="sec-${s.id}">
+    <div class="card-h"><button class="icon foldb" data-act="secFold" data-id="${s.id}" title="${s.fold ? '펴기' : '접기'}" aria-expanded="${!s.fold}">${s.fold ? '▸' : '▾'}</button><input class="title" type="text" data-in="sec.label" data-id="${s.id}" value="${esc(s.label)}" placeholder="${esc(secLabel(s))}" aria-label="섹션 이름">
       <span class="cnt num" data-cnt2="${s.id}">${nf(s.text.length)}자</span>
       <label class="sw"><input type="checkbox" data-in="sec.on" data-id="${s.id}" ${s.on ? 'checked' : ''}>포함</label>
       <button class="icon" data-act="secUp" data-id="${s.id}" ${i ? '' : 'disabled'} title="위로">▲</button><button class="icon" data-act="secDown" data-id="${s.id}" ${i < v.sections.length - 1 ? '' : 'disabled'} title="아래로">▼</button>
@@ -239,8 +249,8 @@ function viewPrompt(w, v) {
       <button class="icon" data-act="secMerge" data-id="${s.id}" ${i < v.sections.length - 1 ? '' : 'disabled'} title="아래 섹션과 합치기">합치기</button>
       <button class="icon" data-act="secCompress" data-id="${s.id}" title="AI로 이 섹션 압축">압축</button>
       <button class="icon" data-act="secCopy" data-id="${s.id}">복사</button>
-      <button class="icon" data-act="secDel" data-id="${s.id}">삭제</button></div>
-    <textarea class="auto" rows="3" data-in="sec.text" data-id="${s.id}" spellcheck="false" aria-label="섹션 내용">${esc(s.text)}</textarea></section>`).join('') || '<div class="note">섹션이 없습니다. 왼쪽에서 섹션을 추가하거나 기존 프롬프트를 붙여 넣으세요.</div>'}</div></div>`;
+      <button class="icon" data-act="secDel" data-id="${s.id}">삭제</button>${memoBtn('sec', s)}</div>
+    ${memoBox('sec', s)}<textarea class="auto" rows="3" data-in="sec.text" data-id="${s.id}" spellcheck="false" aria-label="섹션 내용">${esc(s.text)}</textarea></section>`).join('') || '<div class="note">섹션이 없습니다. 왼쪽에서 섹션을 추가하거나 기존 프롬프트를 붙여 넣으세요.</div>'}</div></div>`;
 }
 
 function kbCard(k, i, st, hits) {
@@ -249,8 +259,8 @@ function kbCard(k, i, st, hits) {
       <input class="title" type="text" data-in="kb.name" data-id="${k.id}" value="${esc(k.name)}" placeholder="슬롯 이름">
       <span class="cnt num ${cntCls(k.text.length, L.KBC)}" data-kcnt="${k.id}">${k.text.length}/${L.KBC}</span>
       <label class="sw"><input type="checkbox" data-in="kb.on" data-id="${k.id}" ${k.on ? 'checked' : ''}>사용</label>
-      <button class="icon" data-act="kbCompress" data-id="${k.id}">압축</button><button class="icon" data-act="kbCopy" data-id="${k.id}" title="내용 복사">복사</button><button class="icon" data-act="kbDel" data-id="${k.id}">삭제</button></div>
-    <div class="pad"><div class="chips" data-chips="${k.id}">${k.triggers.map((t, j) => `<span class="chip ${st.dup.has(t.toLowerCase()) ? 'dup' : ''}" title="${st.dup.has(t.toLowerCase()) ? '다른 슬롯에도 같은 트리거가 있습니다' : ''}">${esc(t)}<button data-act="trgDel" data-id="${k.id}" data-j="${j}" aria-label="트리거 삭제">×</button></span>`).join('')}
+      <button class="icon" data-act="kbCompress" data-id="${k.id}">압축</button><button class="icon" data-act="kbCopy" data-id="${k.id}" title="내용 복사">복사</button><button class="icon" data-act="kbDel" data-id="${k.id}">삭제</button>${memoBtn('kb', k)}</div>
+    ${memoBox('kb', k)}<div class="pad"><div class="chips" data-chips="${k.id}">${k.triggers.map((t, j) => `<span class="chip ${st.dup.has(t.toLowerCase()) ? 'dup' : ''}" title="${st.dup.has(t.toLowerCase()) ? '다른 슬롯에도 같은 트리거가 있습니다' : ''}">${esc(t)}<button data-act="trgDel" data-id="${k.id}" data-j="${j}" aria-label="트리거 삭제">×</button></span>`).join('')}
       ${k.triggers.length < L.TRG ? `<input type="text" data-trg="${k.id}" placeholder="트리거 입력 후 Enter (${k.triggers.length}/${L.TRG})">` : `<span class="hint">트리거 ${L.TRG}개 가득</span>`}
       <button class="icon" data-act="trgCopy" data-id="${k.id}">트리거 복사</button></div></div>
     <textarea class="auto" rows="3" data-in="kb.text" data-id="${k.id}" spellcheck="false" placeholder="이 슬롯이 발동됐을 때 모델에 전달될 내용 (최대 ${L.KBC}자)">${esc(k.text)}</textarea></section>`;
@@ -275,8 +285,8 @@ function kbTestOut(hitList) {
 
 function viewStart(w, v) {
   return `<div class="head"><h2>시작상황</h2><span class="hint num">${v.starts.length}/${L.STN}개 · 본문 ${L.STC}자(HUD·이미지 주소 포함) · 서브 컨텍스트 ${L.SUB}자</span><span class="grow"></span><button class="btn accent" data-act="stAdd" ${v.starts.length >= L.STN ? 'disabled' : ''}>+ 시작상황</button></div>
-  ${v.starts.map((t, i) => `<section class="card" id="st-${t.id}"><div class="card-h"><span class="cnt num">#${i + 1}</span><input class="title" type="text" data-in="st.name" data-id="${t.id}" value="${esc(t.name)}" placeholder="시작상황 이름"><button class="icon" data-act="stDel" data-id="${t.id}">삭제</button></div>
-    <div class="pad"><div class="row"><b>첫 장면</b><span class="cnt num ${cntCls(t.text.length, L.STC)}" data-scnt="${t.id}:text">${t.text.length}/${L.STC}</span><span class="grow"></span><button class="icon" data-act="stCompress" data-id="${t.id}" data-f="text">압축</button><button class="icon" data-act="stCopy" data-id="${t.id}" data-f="text">복사</button></div>
+  ${v.starts.map((t, i) => `<section class="card" id="st-${t.id}"><div class="card-h"><span class="cnt num">#${i + 1}</span><input class="title" type="text" data-in="st.name" data-id="${t.id}" value="${esc(t.name)}" placeholder="시작상황 이름"><button class="icon" data-act="stDel" data-id="${t.id}">삭제</button>${memoBtn('st', t)}</div>
+    ${memoBox('st', t)}<div class="pad"><div class="row"><b>첫 장면</b><span class="cnt num ${cntCls(t.text.length, L.STC)}" data-scnt="${t.id}:text">${t.text.length}/${L.STC}</span><span class="grow"></span><button class="icon" data-act="stCompress" data-id="${t.id}" data-f="text">압축</button><button class="icon" data-act="stCopy" data-id="${t.id}" data-f="text">복사</button></div>
       <textarea class="auto" rows="5" data-in="st.text" data-id="${t.id}" spellcheck="false" style="border:1px solid var(--line);border-radius:8px">${esc(t.text)}</textarea>
       <div class="row"><b>서브 컨텍스트</b><span class="hint">초반 몇 턴에만 인식되는 지시·참고사항</span><span class="cnt num ${cntCls(t.sub.length, L.SUB)}" data-scnt="${t.id}:sub">${t.sub.length}/${L.SUB}</span><span class="grow"></span><button class="icon" data-act="stCompress" data-id="${t.id}" data-f="sub">압축</button><button class="icon" data-act="stCopy" data-id="${t.id}" data-f="sub">복사</button></div>
       <textarea class="auto" rows="4" data-in="st.sub" data-id="${t.id}" spellcheck="false" style="border:1px solid var(--line);border-radius:8px">${esc(t.sub)}</textarea></div></section>`).join('') || '<div class="note">시작상황이 없습니다.</div>'}`;
@@ -590,6 +600,9 @@ function buildContext() {
   if (c.start) { o += `\n===== 시작상황 =====\n`; v.starts.forEach((s, i) => o += `--- 시작상황 ${i + 1}: ${s.name} (${s.text.length}/${L.STC}자) ---\n${s.text}\n[서브 컨텍스트 ${s.sub.length}/${L.SUB}자]\n${s.sub}\n`); }
   if (c.ideas) { o += `\n===== 아이디어 노트 =====\n` + w.notes.map(n => '- ' + n.text).join('\n') + `\n===== 마인드맵 =====\n` + outline(w); }
   if (v.subs.some(subOk)) o += `\n===== 치환 규칙 (원래 표현=기호) =====\n` + v.subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ') + '\n';
+  const memos = [], mm = (x, name) => { if (x.memo && x.memo.trim()) memos.push(`- ${name}: ${x.memo.trim()}`); };
+  if (c.main) v.sections.forEach(s => mm(s, `섹션 "${secLabel(s)}"`)); if (c.kb) v.kb.forEach((k, i) => mm(k, `로어북 슬롯 ${i + 1} "${k.name}"`)); if (c.start) v.starts.forEach((t, i) => mm(t, `시작상황 ${i + 1} "${t.name}"`));
+  if (memos.length) o += `\n===== 항목별 제작자 메모 (프롬프트에 들어가지 않는 주석이다. 의도 파악에 참고하고, 여기 적힌 의도는 결함으로 지적하지 않는다) =====\n${memos.join('\n')}\n`;
   o += `\n===== 의도 메모 (제작자가 일부러 한 것 — 결함으로 지적 금지) =====\n${v.intent || '(없음)'}\n`; return o;
 }
 const QUICK = [
@@ -730,7 +743,10 @@ function mmBind() {
 function searchAll(q) {
   const v = V(), w = W(); if (!v || !q) return []; const lq = q.toLowerCase(), out = [];
   const scan = (text, where, go) => { const lt = text.toLowerCase(); let i = lt.indexOf(lq), n = 0; while (i >= 0 && n < 8) { out.push({ where, i, len: q.length, snip: [text.slice(Math.max(0, i - 28), i), text.slice(i, i + q.length), text.slice(i + q.length, i + q.length + 40)], go }); i = lt.indexOf(lq, i + q.length); n++; } };
-  v.sections.forEach(s => scan(s.text, '프롬프트 · ' + secLabel(s), { tab: 'prompt', sel: `[data-in="sec.text"][data-id="${s.id}"]` }));
+  v.sections.forEach(s => scan(s.text, '프롬프트 · ' + secLabel(s), { tab: 'prompt', sid: s.id, sel: `[data-in="sec.text"][data-id="${s.id}"]` }));
+  v.sections.forEach(s => scan(s.memo || '', '메모 · 섹션 ' + secLabel(s), { tab: 'prompt', sid: s.id, memo: s.id, sel: `[data-in="sec.memo"][data-id="${s.id}"]` }));
+  v.kb.forEach(k => scan(k.memo || '', '메모 · 로어북 ' + (k.name || '이름 없음'), { tab: 'kb', memo: k.id, sel: `[data-in="kb.memo"][data-id="${k.id}"]` }));
+  v.starts.forEach(t => scan(t.memo || '', '메모 · 시작상황 ' + (t.name || ''), { tab: 'start', memo: t.id, sel: `[data-in="st.memo"][data-id="${t.id}"]` }));
   v.kb.forEach(k => { scan(k.text, '로어북 · ' + (k.name || '이름 없음'), { tab: 'kb', sel: `[data-in="kb.text"][data-id="${k.id}"]` }); if ((k.name + ' ' + k.triggers.join(' ')).toLowerCase().includes(lq)) out.push({ where: '로어북 이름·트리거 · ' + (k.name || '이름 없음'), i: 0, len: 0, snip: ['', '', k.triggers.join(', ')], go: { tab: 'kb', sel: `[data-in="kb.text"][data-id="${k.id}"]` } }); });
   v.starts.forEach(s => { scan(s.text, '시작상황 · ' + (s.name || '') + ' 첫 장면', { tab: 'start', sel: `[data-in="st.text"][data-id="${s.id}"]` }); scan(s.sub, '시작상황 · ' + (s.name || '') + ' 서브', { tab: 'start', sel: `[data-in="st.sub"][data-id="${s.id}"]` }); });
   w.notes.forEach(n => scan(n.text, '아이디어 노트', { tab: 'ideas', sel: `[data-in="note.text"][data-id="${n.id}"]` }));
@@ -738,11 +754,18 @@ function searchAll(q) {
 }
 function openSearch() {
   if (!W()) { toast('작품을 연 뒤에 검색할 수 있습니다'); return; }
-  modal(`<h3>검색</h3><input type="search" id="searchIn" placeholder="현재 버전의 프롬프트·로어북·시작상황·아이디어에서 찾기" value="${esc(ui.q || '')}"><div class="results" id="searchOut"></div><div class="foot"><button class="btn" data-act="close">닫기</button></div>`);
+  modal(`<h3>검색 · 바꾸기</h3><input type="search" id="searchIn" placeholder="현재 버전의 프롬프트·로어북·시작상황·메모·아이디어에서 찾기" value="${esc(ui.q || '')}">
+    <div class="row" style="flex-wrap:nowrap"><input type="text" id="replIn" placeholder="바꿀 말" aria-label="바꿀 말"><button class="btn" id="replBtn" data-act="replAll" disabled>모두 바꾸기</button></div>
+    <span class="hint">바꾸기는 프롬프트·로어북 내용·시작상황 글에만 적용됩니다(이름·트리거·메모·노트는 그대로). 대소문자는 구분하지 않으며, 상단의 되돌리기로 취소할 수 있습니다.</span>
+    <div class="results" id="searchOut"></div><div class="foot"><button class="btn" data-act="close">닫기</button></div>`);
   drawSearch();
 }
-function drawSearch() { const q = $('#searchIn').value; ui.q = q; ui.hits = searchAll(q); $('#searchOut').innerHTML = q ? (ui.hits.map((h, i) => `<button class="res" data-act="hit" data-id="${i}"><small>${esc(h.where)}</small>${esc(h.snip[0])}<mark>${esc(h.snip[1])}</mark>${esc(h.snip[2])}</button>`).join('') || '<span class="hint">찾는 내용이 없습니다.</span>') : ''; }
+// 찾아 바꾸기 대상: 크랙에 들어가는 글만(섹션 본문, 로어북 내용, 시작상황 첫 장면·서브 컨텍스트)
+function replTargets(v) { return [...v.sections.map(s => [s, 'text']), ...v.kb.map(k => [k, 'text']), ...v.starts.map(t => [t, 'text']), ...v.starts.map(t => [t, 'sub'])]; }
+function replCount(q) { const v = V(); if (!v || !q) return 0; const re = new RegExp(reEsc(q), 'gi'); return replTargets(v).reduce((n, [o, f]) => n + ((o[f] || '').match(re) || []).length, 0); }
+function drawSearch() { const q = $('#searchIn').value; ui.q = q; ui.hits = searchAll(q); const rb = $('#replBtn'); if (rb) { const n = replCount(q); rb.disabled = !n; rb.textContent = n ? `모두 바꾸기 (${nf(n)}곳)` : '모두 바꾸기'; } $('#searchOut').innerHTML = q ? (ui.hits.map((h, i) => `<button class="res" data-act="hit" data-id="${i}"><small>${esc(h.where)}</small>${esc(h.snip[0])}<mark>${esc(h.snip[1])}</mark>${esc(h.snip[2])}</button>`).join('') || '<span class="hint">찾는 내용이 없습니다.</span>') : ''; }
 function jump(go, i, len) {
+  if (go.sid) { const s = find(V().sections, go.sid); if (s) s.fold = false; } if (go.memo) ui.memoShow[go.memo] = true; // 접힌 섹션·숨긴 메모는 펴고 간다
   ui.tab = go.tab; closeModal(); render();
   const t = $(go.sel); if (!t) return; const card = t.closest('.card,.sticky') || t; card.scrollIntoView({ block: 'start' });
   t.focus({ preventScroll: true }); try { t.setSelectionRange(i, i + len); } catch (e) { /* 무시 */ }
@@ -756,7 +779,75 @@ function openVers() {
   modal(`<h3>버전 관리 — ${esc(w.title)}</h3><div class="hint">버전마다 프롬프트·로어북·시작상황이 따로 저장됩니다. 새 버전은 현재 버전을 그대로 복제해서 만듭니다.</div>
    ${w.versions.map(v => `<div class="verrow ${v.id === w.curVer ? 'cur' : ''}"><div style="flex:1;min-width:160px"><b>${esc(v.name)}</b>${v.id === w.curVer ? ' <span class="hint">(편집 중)</span>' : ''}<div class="hint num">메인 ${nf(mainText(v).length)}자 · 로어북 ${v.kb.length} · ${fmtDate(v.updated)}</div>${v.memo ? `<div class="hint">${esc(v.memo)}</div>` : ''}</div>
      <button class="btn sm" data-act="verOpen" data-id="${v.id}">열기</button><button class="btn sm" data-act="verEdit" data-id="${v.id}">이름·메모</button><button class="btn sm" data-act="verDup" data-id="${v.id}">복제</button><button class="btn sm bad" data-act="verDel" data-id="${v.id}" ${w.versions.length < 2 ? 'disabled' : ''}>삭제</button></div>`).join('')}
-   <div class="foot"><button class="btn accent" data-act="verNew">+ 현재 버전을 복제해 새 버전 만들기</button><button class="btn" data-act="close">닫기</button></div>`);
+   <div class="foot"><button class="btn" data-act="verDiff" ${w.versions.length < 2 ? 'disabled' : ''}>두 버전 비교</button><button class="btn accent" data-act="verNew">+ 현재 버전을 복제해 새 버전 만들기</button><button class="btn" data-act="close">닫기</button></div>`);
+}
+
+// ───────── 버전 비교 ─────────
+// 두 글을 줄 단위로 견준다(가장 긴 공통 줄 묶음, LCS). 돌려주는 값: [{ t: ' ' 같음 | '-' 지워짐 | '+' 생김, s: 줄 }]
+function lineDiff(a, b) {
+  const A = a.split('\n'), B = b.split('\n'), n = A.length, m = B.length; let p = 0, q = 0;
+  while (p < n && p < m && A[p] === B[p]) p++;
+  while (q < n - p && q < m - p && A[n - 1 - q] === B[m - 1 - q]) q++;
+  const a2 = A.slice(p, n - q), b2 = B.slice(p, m - q), N = a2.length, M = b2.length, mid = [];
+  if (N * M > 4e6) { a2.forEach(s => mid.push({ t: '-', s })); b2.forEach(s => mid.push({ t: '+', s })); } // 지나치게 크면 통째로 바뀐 것으로 본다
+  else {
+    const dp = Array.from({ length: N + 1 }, () => new Uint16Array(M + 1));
+    for (let i = N - 1; i >= 0; i--) for (let j = M - 1; j >= 0; j--) dp[i][j] = a2[i] === b2[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    let i = 0, j = 0;
+    while (i < N && j < M) { if (a2[i] === b2[j]) { mid.push({ t: ' ', s: a2[i] }); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) mid.push({ t: '-', s: a2[i++] }); else mid.push({ t: '+', s: b2[j++] }); }
+    while (i < N) mid.push({ t: '-', s: a2[i++] }); while (j < M) mid.push({ t: '+', s: b2[j++] });
+  }
+  return [...A.slice(0, p).map(s => ({ t: ' ', s })), ...mid, ...A.slice(n - q).map(s => ({ t: ' ', s }))];
+}
+// 한 줄 안에서 달라진 가운데 부분만 찾는다(앞뒤 공통 부분 제외). 이모지(2글자짜리)의 한가운데를 자르지 않는다.
+function midCut(x, y) {
+  let p = 0; const max = Math.min(x.length, y.length); while (p < max && x[p] === y[p]) p++;
+  if (p && x.charCodeAt(p - 1) >= 0xD800 && x.charCodeAt(p - 1) <= 0xDBFF) p--;
+  let q = 0; while (q < max - p && x[x.length - 1 - q] === y[y.length - 1 - q]) q++;
+  if (q) { const c = x.charCodeAt(x.length - q); if (c >= 0xDC00 && c <= 0xDFFF) q--; }
+  return [p, q];
+}
+function diffHTML(a, b) {
+  if (a === b) return '<div class="note">두 버전의 내용이 같습니다.</div>';
+  const d = lineDiff(a, b), out = [], line = (t, html) => `<div class="dl ${t === '+' ? 'add' : t === '-' ? 'del' : ''}"><i>${t === ' ' ? '' : t === '+' ? '+' : '−'}</i><span>${html || '&nbsp;'}</span></div>`;
+  for (let i = 0; i < d.length;) {
+    if (d[i].t === ' ') { // 같은 줄이 길게 이어지면 앞뒤 2줄만 남기고 접는다
+      let j = i; while (j < d.length && d[j].t === ' ') j++; const run = d.slice(i, j), head = i === 0 ? 0 : 2, tail = j === d.length ? 0 : 2;
+      if (run.length > head + tail + 1) { run.slice(0, head).forEach(x => out.push(line(' ', esc(x.s)))); out.push(`<div class="dl gap">⋯ 같은 줄 ${nf(run.length - head - tail)}개 ⋯</div>`); run.slice(run.length - tail).forEach(x => tail && out.push(line(' ', esc(x.s)))); }
+      else run.forEach(x => out.push(line(' ', esc(x.s))));
+      i = j; continue;
+    }
+    let j = i; while (j < d.length && d[j].t === '-') j++; let k = j; while (k < d.length && d[k].t === '+') k++;
+    const del = d.slice(i, j), add = d.slice(j, k);
+    if (del.length && del.length === add.length) { // 줄 수가 같으면 짝지어 달라진 부분만 진하게
+      const pair = del.map((x, n) => { const y = add[n].s, [p, q] = midCut(x.s, y), h = (s) => esc(s.slice(0, p)) + (s.length - p - q > 0 ? `<mark>${esc(s.slice(p, s.length - q))}</mark>` : '') + esc(s.slice(s.length - q)); return [h(x.s), h(y)]; });
+      pair.forEach(x => out.push(line('-', x[0]))); pair.forEach(x => out.push(line('+', x[1])));
+    } else { del.forEach(x => out.push(line('-', esc(x.s)))); add.forEach(x => out.push(line('+', esc(x.s)))); }
+    i = k;
+  }
+  return `<div class="diff">${out.join('')}</div>`;
+}
+function openDiff(aId, bId) {
+  const w = W(); if (!w || w.versions.length < 2) { toast('비교하려면 버전이 2개 이상 있어야 합니다'); return; }
+  const ci = w.versions.findIndex(v => v.id === w.curVer);
+  const B = find(w.versions, bId) || w.versions[ci], A = find(w.versions, aId) || w.versions[ci > 0 ? ci - 1 : 1];
+  const opts = sel => w.versions.map(v => `<option value="${v.id}" ${v.id === sel ? 'selected' : ''}>${esc(v.name)}</option>`).join('');
+  const ta = mainText(A), tb = mainText(B), dl = n => (n > 0 ? '+' : '') + nf(n);
+  // 로어북은 이름으로, 시작상황은 순서로 짝짓는다
+  const key = arr => { const seen = {}; return arr.map((k, i) => { const n = (k.name || '').trim() || '#' + (i + 1); seen[n] = (seen[n] || 0) + 1; return n + (seen[n] > 1 ? ' (' + seen[n] + ')' : ''); }); };
+  const ka = key(A.kb), kb = key(B.kb), kbRows = [], body = k => `트리거: ${k.triggers.join(', ') || '없음'}\n${k.text}`;
+  kb.forEach((n, i) => { const j = ka.indexOf(n); if (j < 0) kbRows.push(`<div class="dl add"><i>+</i><span>${esc(n)} — 새로 생김 (${B.kb[i].text.length}자)</span></div>`); else if (body(A.kb[j]) !== body(B.kb[i])) kbRows.push(`<details><summary>${esc(n)} — 바뀜 (${A.kb[j].text.length}자 → ${B.kb[i].text.length}자)</summary>${diffHTML(body(A.kb[j]), body(B.kb[i]))}</details>`); });
+  ka.forEach((n, j) => { if (kb.indexOf(n) < 0) kbRows.push(`<div class="dl del"><i>−</i><span>${esc(n)} — 없어짐</span></div>`); });
+  const stRows = []; for (let i = 0; i < Math.max(A.starts.length, B.starts.length); i++) { const x = A.starts[i], y = B.starts[i], f = t => `${t.text}\n[서브 컨텍스트]\n${t.sub}`;
+    if (!x) stRows.push(`<div class="dl add"><i>+</i><span>시작상황 ${i + 1} "${esc(y.name)}" — 새로 생김</span></div>`); else if (!y) stRows.push(`<div class="dl del"><i>−</i><span>시작상황 ${i + 1} "${esc(x.name)}" — 없어짐</span></div>`); else if (f(x) !== f(y)) stRows.push(`<details><summary>시작상황 ${i + 1} "${esc(y.name)}" — 바뀜</summary>${diffHTML(f(x), f(y))}</details>`); }
+  modal(`<h3>두 버전 비교 — ${esc(w.title)}</h3>
+   <div class="row"><label class="f" style="flex:1">이전(기준)<select id="diffA">${opts(A.id)}</select></label><label class="f" style="flex:1">이후(비교 대상)<select id="diffB">${opts(B.id)}</select></label></div>
+   <div class="tiles"><div class="tile"><b class="num">${nf(ta.length)} → ${nf(tb.length)}</b><span>메인 글자수 (${dl(tb.length - ta.length)}자)</span></div><div class="tile"><b class="num">${A.kb.length} → ${B.kb.length}</b><span>로어북 슬롯</span></div><div class="tile"><b class="num">${A.starts.length} → ${B.starts.length}</b><span>시작상황</span></div></div>
+   <span class="hint">메인 프롬프트는 켜 둔 섹션을 합친 글(크랙에 붙이는 글)을 줄 단위로 견줍니다. <b class="dl-k del">−</b> 는 이전에만 있던 줄, <b class="dl-k add">+</b> 는 이후에 생긴 줄입니다.</span>
+   <b>메인 프롬프트</b>${A.id === B.id ? '<div class="note warn">같은 버전을 골랐습니다. 서로 다른 버전을 골라 주세요.</div>' : diffHTML(ta, tb)}
+   <b>로어북</b>${kbRows.join('') || '<div class="note">바뀐 슬롯이 없습니다.</div>'}
+   <b>시작상황</b>${stRows.join('') || '<div class="note">바뀐 시작상황이 없습니다.</div>'}
+   <div class="foot"><button class="btn" data-act="vers">← 버전 관리</button><button class="btn" data-act="close">닫기</button></div>`, true);
 }
 function cloneVer(v, name) { const c = JSON.parse(JSON.stringify(v)); c.id = uid(); c.name = name; c.created = c.updated = now(); const by = {}; c.sections.forEach(s => { const o = s.id; s.id = uid(); if (c.rules && c.rules.by[o]) by[s.id] = c.rules.by[o]; }); if (c.rules) c.rules.by = by; c.kb.forEach(s => s.id = uid()); c.starts.forEach(s => s.id = uid()); return c; }
 
@@ -826,7 +917,7 @@ const A = {
   importPaste() { const t = $('#importArea').value.trim(); if (t) importText(t); },
 
   subGo(el) { goPos(el.dataset.id, +el.dataset.pos); },
-  secGo(el) { const c = $('#sec-' + el.dataset.id); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } },
+  secGo(el) { const s0 = find(V().sections, el.dataset.id); if (s0 && s0.fold) { s0.fold = false; save(); render(); } const c = $('#sec-' + el.dataset.id); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } },
   secAdd() { const s = { id: uid(), label: '', text: '# 새 섹션\n', on: true }; V().sections.push(s); save(); render(); A.secGo({ dataset: { id: s.id } }); },
   async secPaste() {
     const v = V(), r = await ask({ title: '프롬프트 전체 붙여 넣어 자동 분할', ok: '분할하기', note: '줄 맨 앞이 "# "(대분류)인 곳마다 섹션으로 나눕니다. "## " 소제목은 섹션 안에 남고 왼쪽 목록에 하위 항목으로 표시됩니다. 나눈 섹션을 다시 합치면 원문과 글자 하나까지 같습니다.', fields: [{ key: 'text', label: '프롬프트 전문', type: 'area', rows: 12 }, { key: 'deep', type: 'check', text: '## 소제목도 따로 떼어 별도 섹션으로 만들기 (보통은 끄세요)' }, { key: 'rep', type: 'check', text: '지금 있는 섹션을 지우고 바꾸기 (끄면 뒤에 덧붙임)', value: true }] });
@@ -839,7 +930,7 @@ const A = {
     if (!p || p >= t.value.length) { toast('나눌 위치에 커서를 두고 눌러 주세요'); return; }
     snap('섹션 나누기'); const s = a[i], head = s.text.slice(0, p).replace(/\n$/, ''), tail = s.text.slice(p).replace(/^\n/, ''); s.text = head; a.splice(i + 1, 0, { id: uid(), label: '', text: tail, on: s.on }); save(); render();
   },
-  secMerge(el) { const a = V().sections, i = a.findIndex(s => s.id === el.dataset.id); if (i >= a.length - 1) return; snap('섹션 합치기'); a[i].text += '\n' + a[i + 1].text; a.splice(i + 1, 1); save(); render(); },
+  secMerge(el) { const a = V().sections, i = a.findIndex(s => s.id === el.dataset.id); if (i >= a.length - 1) return; snap('섹션 합치기'); a[i].text += '\n' + a[i + 1].text; a[i].memo = [a[i].memo, a[i + 1].memo].filter(x => x && x.trim()).join('\n'); a.splice(i + 1, 1); save(); render(); },
   secDel(el) { const a = V().sections, s = find(a, el.dataset.id); if (s.text.trim() && !confirm(`"${secLabel(s)}" 섹션을 삭제할까요?`)) return; snap('섹션 삭제'); a.splice(a.indexOf(s), 1); save(); render(); },
   secCopy(el) { copy(find(V().sections, el.dataset.id).text); },
   secCompress(el) { openCompress('sec:' + el.dataset.id); },
@@ -902,6 +993,21 @@ const A = {
   cmpDrop() { aiUI.cmp = null; renderAI(); },
   useReset() { if (!confirm('사용량 기록을 지울까요?')) return; S.usage = { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] }; save(); renderAI(); },
   hit(el) { const h = ui.hits[+el.dataset.id]; jump(h.go, h.i, h.len); },
+  replAll() {
+    const q = $('#searchIn').value, r = $('#replIn').value, v = V(); if (!q || !v) return; const n = replCount(q); if (!n) return;
+    if (!r && !confirm(`바꿀 말이 비어 있습니다. 찾은 "${q}" ${n}곳을 지울까요?`)) return;
+    const re = new RegExp(reEsc(q), 'gi'), before = mainText(v).length; snap('찾아 바꾸기');
+    replTargets(v).forEach(([o, f]) => { const x = o[f] || '', y = x.replace(re, () => r); if (y !== x) o[f] = y; });
+    save(); render(); drawSearch(); const diff = mainText(v).length - before;
+    toast(`${nf(n)}곳을 바꿨습니다${diff ? ` · 메인 프롬프트 ${diff > 0 ? '+' : ''}${nf(diff)}자` : ''}`, 4000);
+  },
+  verDiff() { openDiff(); },
+  memo(el) { // 메모 칸 보이기·숨기기. 내용은 숨겨도 지워지지 않는다
+    const id = el.dataset.id, k = el.dataset.k, x = find(V()[MEMO_ARR[k]], id); if (!x) return; const show = !memoShown(x); ui.memoShow[id] = show;
+    if (show && x.fold) { x.fold = false; save(); } render(); if (show) { const t = $(`[data-in="${k}.memo"][data-id="${id}"]`); if (t) { if (motionOn()) t.parentNode.classList.add('fade-in'); t.focus({ preventScroll: true }); } }
+  },
+  secFold(el) { const s = find(V().sections, el.dataset.id); if (!s) return; s.fold = !s.fold; save(); render(); },
+  foldAll(el) { const on = !!el.dataset.v; V().sections.forEach(s => s.fold = on); save(); render(); if (on) window.scrollTo(0, 0); },
   subAdd() { const r = { id: uid(), long: '', short: '', bulk: true }; V().subs.unshift(r); save(); render(); const f = $(`[data-in="sub.long"][data-id="${r.id}"]`); f && f.focus(); },
   subDel(el) { const a = V().subs; a.splice(a.findIndex(r => r.id === el.dataset.id), 1); save(); render(); },
   subTake(el) { const r = subDetect(V())[+el.dataset.id]; if (r) { V().subs.push({ id: uid(), ...r, bulk: /^\{\{/.test(r.long) }); save(); render(); } },
@@ -940,6 +1046,7 @@ document.addEventListener('input', e => {
   if (!k) return; const id = t.dataset.id;
   if (k === 'sec.text') { const s = find(v.sections, id); s.text = t.value; $$(`[data-cnt="${id}"]`).forEach(x => x.textContent = nf(s.text.length)); $$(`[data-cnt2="${id}"]`).forEach(x => x.textContent = nf(s.text.length) + '자'); if (!s.label) { const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); } const sig = subSig(s); if (t._sig === undefined) t._sig = sig; if (t._sig !== sig || /^## /m.test(s.text)) { t._sig = sig; $('#navlist').innerHTML = navHTML(v); } refreshMain(); }
   else if (k === 'sec.label') { const s = find(v.sections, id); s.label = t.value; const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); }
+  else if (k === 'sec.memo' || k === 'kb.memo' || k === 'st.memo') { const kind = k.slice(0, -5); find(v[MEMO_ARR[kind]], id).memo = t.value; const b = $(`.memob[data-id="${id}"]`); if (b) b.classList.toggle('has', !!t.value.trim()); }
   else if (k === 'kb.name') find(v.kb, id).name = t.value;
   else if (k === 'sub.long' || k === 'sub.short') find(v.subs, id)[k.slice(4)] = t.value;
   else if (k === 'kb.text') { const s = find(v.kb, id); s.text = t.value; const c = $(`[data-kcnt="${id}"]`); c.textContent = `${s.text.length}/${L.KBC}`; c.className = 'cnt num ' + cntCls(s.text.length, L.KBC); }
@@ -956,6 +1063,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target, k = t.dataset.in, v = V();
   if (t.id === 'verSel') { W().curVer = t.value; ui.undo = []; $('#undoBtn').hidden = true; save(); render(); }
+  else if (t.id === 'diffA' || t.id === 'diffB') openDiff($('#diffA').value, $('#diffB').value);
   else if (t.id === 'joinBlank') { v.joinBlank = t.checked; save(); refreshMain(); }
   else if (t.id === 'cmpTarget') { aiUI.cmpTarget = t.value; aiUI.cmp = null; renderAI(); }
   else if (t.id === 'setModel') { const p = priceOf(t.value); if (p) { $('#setIn').value = p.in; $('#setOut').value = p.out; } }
