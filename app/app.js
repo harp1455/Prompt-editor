@@ -22,7 +22,59 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 const now = () => new Date().toISOString();
 const fmtDate = s => { try { const d = new Date(s); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } catch (e) { return ''; } };
 const nf = n => Number(n || 0).toLocaleString('ko-KR');
-function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms); }
+function toast(msg, ms = 2600) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false; void t.offsetWidth; t.classList.add('show');
+  clearTimeout(toast.t); clearTimeout(toast.h);
+  toast.t = setTimeout(() => { t.classList.remove('show'); toast.h = setTimeout(() => t.hidden = true, 240); }, ms);
+}
+
+// ───────── 움직임(애니메이션) ─────────
+// 원칙: 화면 구성은 그대로 두고, "무엇이 어디서 왔는지"를 보여 주는 짧은 움직임만 쓴다. 모두 transform·opacity 만 움직여 휴대폰에서도 가볍다.
+// 대부분은 style.css 의 "움직임" 구역(클래스가 붙으면 재생)이 맡고, 여기에는 위치 계산이 필요한 것만 둔다.
+const RM = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+const DK = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+// 설정의 "움직임": auto(기기 설정 따름) / on / off
+function motionOn() { const m = S && S.settings ? S.settings.motion : 'auto'; return m === 'on' || (m !== 'off' && !(RM && RM.matches)); }
+const EASE = 'cubic-bezier(.2,.8,.2,1)';
+// 다시 그려도 같은 항목을 알아보기 위한 이름표. 카드·목록 항목처럼 id 를 가진 것만 대상이다.
+const FLIP_SEL = '.card,.sticky,.work,.navgrp';
+function flipKey(el) {
+  const own = el.id || el.dataset.id, inner = own || !el.matches('.work,.sticky') ? '' : (el.querySelector('[data-id]') || { dataset: {} }).dataset.id; // 작품 카드·노트는 안쪽 단추에 id 가 있다
+  const d = own || inner; return d ? el.className.split(' ')[0] + ':' + d : (el.matches('.work.new') ? 'work:new' : '');
+}
+function flipSnap(root) { const m = new Map(); $$(FLIP_SEL, root).forEach(el => { const k = flipKey(el); if (!k) return; const r = el.getBoundingClientRect(); m.set(k, m.has(k) ? null : { x: r.left + scrollX, y: r.top + scrollY }); }); return m; }
+// 다시 그린 뒤: 자리가 바뀐 항목은 이전 자리에서 미끄러져 오고, 새로 생긴 항목은 살짝 떠오른다.
+function flipPlay(root, before) {
+  if (!before || !root.animate) return;
+  $$(FLIP_SEL, root).forEach(el => {
+    const k = flipKey(el); if (!k) return; const prev = before.get(k);
+    if (prev === null) return; if (!prev) { if (before.size) el.classList.add('pop'); return; }
+    const r = el.getBoundingClientRect(), dx = prev.x - (r.left + scrollX), dy = prev.y - (r.top + scrollY);
+    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+    if (r.bottom < -200 || r.top > innerHeight + 200 || Math.abs(dy) > innerHeight * 1.5) return; // 화면 밖은 건너뛴다
+    try { el.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], { duration: 260, easing: EASE }); } catch (e) { /* 지원하지 않으면 그냥 넘어간다 */ }
+  });
+}
+// 탭 아래 밑줄이 이전 탭에서 새 탭으로 미끄러진다
+function tabInk() {
+  const tabs = $('#tabs'), on = $('button.on', tabs), ink = $('.ink', tabs); if (tabs.hidden || !on || !ink) { tabInk.last = null; return; }
+  const to = `translateX(${on.offsetLeft}px) scaleX(${on.offsetWidth})`;
+  if (tabInk.last && tabInk.last !== to && motionOn()) { ink.style.transition = 'none'; ink.style.transform = tabInk.last; void ink.offsetWidth; ink.style.transition = ''; }
+  else if (!tabInk.last) ink.style.transition = 'none';
+  ink.style.transform = to; if (!tabInk.last) { void ink.offsetWidth; ink.style.transition = ''; } tabInk.last = to;
+  // 좁은 화면: 고른 탭이 가려져 있으면 보이는 곳으로 옮긴다
+  const l = Math.max(0, on.offsetLeft - 24), r = on.offsetLeft + on.offsetWidth + 24 - tabs.clientWidth;
+  if (tabs.scrollLeft > l || tabs.scrollLeft < r) { const x = Math.max(0, tabs.scrollLeft > l ? l : r); try { tabs.scrollTo({ left: x, behavior: motionOn() ? 'smooth' : 'auto' }); } catch (e) { tabs.scrollLeft = x; } }
+}
+// 윈도우 일체형 창: 창 버튼(최소화·최대화·닫기) 색을 지금 테마에 맞춘다
+function syncChrome() {
+  const t = S && S.settings ? S.settings.theme : 'auto', dark = t === 'dark' || (t !== 'light' && !!(DK && DK.matches));
+  document.documentElement.dataset.motion = motionOn() ? 'on' : 'off';
+  if (window.desktop && window.desktop.theme && syncChrome.dark !== dark) { syncChrome.dark = dark; try { window.desktop.theme(dark); } catch (e) { /* 무시 */ } }
+}
+if (window.desktop) document.documentElement.classList.add('desk');
+[RM, DK].forEach(q => { if (q && q.addEventListener) q.addEventListener('change', () => syncChrome()); });
+const regrow = () => $$('#main textarea.auto').forEach(grow);
 async function copy(text, okMsg = '복사했습니다') {
   try { await navigator.clipboard.writeText(text); toast(okMsg); return; } catch (e) { /* 아래 대체 경로 */ }
   const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -68,7 +120,7 @@ function sampleWork() {
   v.starts = [{ id: uid(), name: '첫 만남', text: '', sub: '' }];
   return w;
 }
-function fresh() { return { format: 1, works: [sampleWork()], workId: null, settings: { apiKey: '', model: MODELS[0].id, priceIn: MODELS[0].in, priceOut: MODELS[0].out, krw: 1400, temp: 1, theme: 'auto', models: [] }, usage: { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] } }; }
+function fresh() { return { format: 1, works: [sampleWork()], workId: null, settings: { apiKey: '', model: MODELS[0].id, priceIn: MODELS[0].in, priceOut: MODELS[0].out, krw: 1400, temp: 1, theme: 'auto', motion: 'auto', models: [] }, usage: { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] } }; }
 function normalize(s) {
   const f = fresh();
   s.settings = Object.assign(f.settings, s.settings || {}); s.usage = Object.assign(f.usage, s.usage || {});
@@ -118,17 +170,25 @@ function render() {
   const w = W(), v = V();
   document.documentElement.dataset.theme = S.settings.theme === 'auto' ? '' : S.settings.theme;
   if (S.settings.theme === 'auto') delete document.documentElement.dataset.theme;
+  syncChrome();
+  // 화면이 바뀐 경우(작품을 열거나 탭을 옮김)에는 들어오는 움직임을, 같은 화면을 다시 그리는 경우에는 자리 이동 움직임을 쓴다.
+  const viewKey = (w ? w.id + '/' + v.id : 'lib') + '|' + (w ? ui.tab : ''), changed = viewKey !== render.key, anim = motionOn(); render.key = viewKey;
   $('#crumb').innerHTML = w ? `<span>/</span><b>${esc(w.title)}</b><select id="verSel" aria-label="버전 선택">${w.versions.map(x => `<option value="${x.id}" ${x.id === w.curVer ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select><button class="btn sm" data-act="vers">버전 관리</button>` : '';
   const tabs = $('#tabs'); tabs.hidden = !w;
   if (w) {
     const n = mainText(v).length;
     const badge = { prompt: `<span class="badge num ${n > L.MAIN ? 'over' : ''}" id="tabMain">${nf(n)}</span>`, kb: `<span class="badge num">${v.kb.length}/${L.KBN}</span>`, start: `<span class="badge num">${v.starts.length}/${L.STN}</span>`, subs: `<span class="badge num">${v.subs.length}</span>`, rules: (r => `<span class="badge num ${r.stale.length && r.items.length ? 'over' : ''}">${r.items.length}</span>`)(rulesState(v)) };
-    tabs.innerHTML = TABS.map(([k, t]) => `<button data-act="tab" data-id="${k}" class="${ui.tab === k ? 'on' : ''}">${t}${badge[k] || ''}</button>`).join('');
+    const sl = tabs.scrollLeft;
+    tabs.innerHTML = TABS.map(([k, t]) => `<button data-act="tab" data-id="${k}" class="${ui.tab === k ? 'on' : ''}">${t}${badge[k] || ''}</button>`).join('') + '<i class="ink"></i>';
+    tabs.scrollLeft = sl;
   }
-  const m = $('#main');
+  tabInk();
+  const m = $('#main'), before = !changed && anim ? flipSnap(m) : null;
+  m.classList.toggle('view-in', changed && anim);
   if (!w) m.innerHTML = viewLibrary();
   else m.innerHTML = ({ prompt: viewPrompt, kb: viewKB, start: viewStart, subs: viewSubs, rules: viewRules, preview: viewPreview, ideas: viewIdeas, mind: viewMind, info: viewInfo }[ui.tab] || viewPrompt)(w, v);
   $$('textarea.auto', m).forEach(grow);
+  flipPlay(m, before);
   if (w && ui.tab === 'prompt') sortable($('#navlist'), '.navgrp', ids => { reorder(v.sections, ids); save(); render(); });
   if (w && ui.tab === 'kb') sortable($('#kblist'), '.card', ids => { reorder(v.kb, ids); save(); render(); });
   if (w && ui.tab === 'mind') { mmBind(); mmDraw(); }
@@ -248,10 +308,10 @@ function viewMind() {
 
 function viewInfo(w, v) {
   return `<div class="head"><h2>작품 정보</h2></div>
-  <div class="card"><div class="pad" style="grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:16px">
+  <div class="card"><div class="pad infogrid">
     <div style="display:grid;gap:8px;align-content:start"><div class="work"><div class="thumb" style="${w.thumb ? `background-image:url(${w.thumb})` : ''}">${w.thumb ? '' : esc(w.title.slice(0, 2))}</div></div>
       <div class="row"><button class="btn sm" data-act="thumbPick">썸네일 고르기</button>${w.thumb ? '<button class="btn sm" data-act="thumbDel">지우기</button>' : ''}</div></div>
-    <div style="display:grid;gap:10px;align-content:start"><label class="f">작품 제목<input type="text" data-in="work.title" value="${esc(w.title)}"></label>
+    <div style="display:grid;gap:10px;align-content:start;min-width:0"><label class="f">작품 제목<input type="text" data-in="work.title" value="${esc(w.title)}"></label>
       <label class="f">소개·메모<textarea rows="4" data-in="work.desc" style="font-family:var(--font)">${esc(w.desc)}</textarea></label>
       <label class="f">의도 메모 (현재 버전) — AI 검수가 결함으로 지적하지 않았으면 하는, 일부러 그렇게 쓴 부분을 적어 두세요
         <textarea rows="4" data-in="ver.intent" style="font-family:var(--font)" placeholder="예: MEM 주석은 일부러 중문 간체로만 출력하게 했음 / 선택지 넘기기 금지는 의도된 강한 표현임">${esc(v.intent)}</textarea></label>
@@ -387,11 +447,16 @@ function sortable(box, sel, done) {
     const g = e.target.closest('.grip'); if (!g) return;
     const item = g.closest(sel); if (!item || item.parentNode !== box) return;
     e.preventDefault(); item.classList.add('dragging'); // 요소를 옮기면 포인터 캡처가 풀리므로 document 에서 듣는다
+    let hold = 0; // 옆 항목이 비켜나는 움직임이 끝날 때까지는 다시 옮기지 않는다(움직이는 중의 위치로 판단하면 떨림이 생김)
     const move = ev => {
+      if (ev.clientY < 110) window.scrollBy(0, -14); else if (ev.clientY > innerHeight - 70) window.scrollBy(0, 14);
+      if (Date.now() < hold) return;
       const sibs = [...box.children].filter(x => x !== item && x.matches(sel)); let before = null;
       for (const s of sibs) { const r = s.getBoundingClientRect(); if (ev.clientY < r.top + r.height / 2) { before = s; break; } }
-      if (before) { if (item.nextElementSibling !== before) box.insertBefore(item, before); } else if (box.lastElementChild !== item) box.appendChild(item);
-      if (ev.clientY < 110) window.scrollBy(0, -14); else if (ev.clientY > innerHeight - 70) window.scrollBy(0, 14);
+      const stay = before ? item.nextElementSibling === before : box.lastElementChild === item; if (stay) return;
+      const fl = motionOn() && item.animate ? [item, ...sibs].map(x => [x, x.getBoundingClientRect()]) : null;
+      if (before) box.insertBefore(item, before); else box.appendChild(item);
+      if (fl) { hold = Date.now() + 170; fl.forEach(([x, a]) => { const b = x.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top; if (dx || dy) try { x.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], { duration: 160, easing: EASE }); } catch (e) { /* 무시 */ } }); }
     };
     const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up); item.classList.remove('dragging'); done([...box.children].filter(x => x.matches(sel)).map(x => x.dataset.id)); };
     document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
@@ -399,8 +464,20 @@ function sortable(box, sel, done) {
 }
 
 // ───────── 모달 ─────────
-function modal(html, wide) { $('#modal').innerHTML = `<div class="ov" data-ov><div class="dlg ${wide ? 'wide' : ''}">${html}</div></div>`; const f = $('#modal input,#modal textarea,#modal select'); if (f) f.focus(); }
-function closeModal() { $('#modal').innerHTML = ''; if (ask.res) { const r = ask.res; ask.res = null; r(null); } }
+function modal(html, wide) {
+  const again = !!$('#modal').firstElementChild; // 열려 있는 창의 내용만 바꾸는 경우에는 등장 움직임을 다시 틀지 않는다
+  $('#modal').innerHTML = `<div class="ov ${again ? 'noanim' : ''}" data-ov><div class="dlg ${wide ? 'wide' : ''}">${html}</div></div>`; document.documentElement.classList.add('modal-open');
+  const f = $('#modal input,#modal textarea,#modal select'); if (f) f.focus({ preventScroll: true });
+}
+// 모달을 비운다. #modal 은 즉시 비워지고(다른 코드가 "열려 있는가"를 이것으로 판단함), 사라지는 모습만 복사본이 잠깐 보여 준다.
+function modalOut() {
+  const m = $('#modal'), ov = m.firstElementChild; document.documentElement.classList.remove('modal-open'); if (!ov) return;
+  if (!motionOn()) { m.innerHTML = ''; return; }
+  ov.querySelectorAll('*').forEach(n => { for (const a of ['id', 'data-act', 'data-ask', 'data-in']) n.removeAttribute(a); });
+  ov.removeAttribute('data-ov'); ov.setAttribute('aria-hidden', 'true'); ov.classList.remove('noanim'); ov.classList.add('closing');
+  document.body.appendChild(ov); m.innerHTML = ''; setTimeout(() => ov.remove(), 200);
+}
+function closeModal() { modalOut(); if (ask.res) { const r = ask.res; ask.res = null; r(null); } }
 function ask({ title, fields, ok = '확인', note = '' }) {
   return new Promise(res => {
     modal(`<h3>${esc(title)}</h3>${note ? `<div class="hint">${note}</div>` : ''}${fields.map(f => `<label class="f">${esc(f.label || '')}${f.type === 'area' ? `<textarea rows="${f.rows || 8}" data-ask="${f.key}" placeholder="${esc(f.ph || '')}">${esc(f.value || '')}</textarea>` : f.type === 'check' ? `<span class="sw"><input type="checkbox" data-ask="${f.key}" ${f.value ? 'checked' : ''}>${esc(f.text || '')}</span>` : `<input type="text" data-ask="${f.key}" value="${esc(f.value || '')}" placeholder="${esc(f.ph || '')}">`}</label>`).join('')}
@@ -454,7 +531,8 @@ function openSettings() {
    <div class="row"><label class="f" style="flex:1">입력 단가 (USD / 100만 토큰)<input type="number" step="0.01" id="setIn" value="${s.priceIn}"></label><label class="f" style="flex:1">출력 단가 (USD / 100만 토큰)<input type="number" step="0.01" id="setOut" value="${s.priceOut}"></label></div>
    <span class="hint">단가는 2026년 11월 기준 참고값으로 자동 입력됩니다. 실제 청구는 구글 요금표를 따르므로 요금이 바뀌면 여기서 고쳐 주세요. 사고(thinking) 토큰은 출력 단가로 계산합니다.</span>
    <div class="row"><label class="f" style="flex:1">환율 (1달러 = 원)<input type="number" id="setKrw" value="${s.krw}"></label><label class="f" style="flex:1">창의성 (temperature 0~2)<input type="number" step="0.1" min="0" max="2" id="setTemp" value="${s.temp}"></label>
-   <label class="f" style="flex:1">화면 테마<select id="setTheme"><option value="auto" ${s.theme === 'auto' ? 'selected' : ''}>기기 설정 따름</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>밝게</option><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>어둡게</option></select></label></div>
+   <label class="f" style="flex:1">화면 테마<select id="setTheme"><option value="auto" ${s.theme === 'auto' ? 'selected' : ''}>기기 설정 따름</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>밝게</option><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>어둡게</option></select></label>
+   <label class="f" style="flex:1">화면 움직임(애니메이션)<select id="setMotion"><option value="auto" ${s.motion === 'auto' ? 'selected' : ''}>기기 설정 따름</option><option value="on" ${s.motion === 'on' ? 'selected' : ''}>항상 켬</option><option value="off" ${s.motion === 'off' ? 'selected' : ''}>끔</option></select></label></div>
    <span class="hint">AI 요청은 모든 안전 설정을 끈 상태(OFF)로 보냅니다.</span>
    <div class="note"><div class="row"><b>앱 버전 ${esc(INFO.version)}</b><span class="grow"></span><button class="btn sm" data-act="updCheck">업데이트 확인</button></div><div class="hint" id="updStatus">${esc(updText())}</div>
    <label class="sw"><input type="checkbox" id="setAuto" ${s.autoUpdate !== false ? 'checked' : ''}>앱을 켤 때마다 새 버전 자동 확인</label></div>
@@ -558,7 +636,7 @@ function cmpTargets() {
   v.starts.forEach((s, i) => { o.push({ key: 'st:' + s.id + ':text', label: `시작상황 ${i + 1} 첫 장면 (${s.text.length}자)`, get: () => s.text, set: t => s.text = t }); o.push({ key: 'st:' + s.id + ':sub', label: `시작상황 ${i + 1} 서브 컨텍스트 (${s.sub.length}자)`, get: () => s.sub, set: t => s.sub = t }); });
   return o;
 }
-function openCompress(key) { aiUI.open = true; aiUI.tab = 'cmp'; aiUI.cmpTarget = key; aiUI.cmp = null; document.body.classList.add('ai-open'); $('#ai').hidden = false; renderAI(); }
+function openCompress(key) { aiUI.open = true; aiUI.tab = 'cmp'; aiUI.cmpTarget = key; aiUI.cmp = null; document.body.classList.add('ai-open'); renderAI(); }
 async function runCompress() {
   const t = cmpTargets().find(x => x.key === aiUI.cmpTarget); if (!t || aiUI.busy) return; const before = t.get(); if (!before.trim()) { toast('비어 있는 항목입니다'); return; }
   aiUI.busy = true; aiUI.cmp = null; renderAI();
@@ -574,7 +652,15 @@ function md(text) { // 코드블록만 따로 꾸미는 최소 렌더
   return text.split(/```/).map((seg, i) => i % 2 ? `<div class="codewrap"><pre class="code">${esc(seg.replace(/^[a-zA-Z]*\n/, '').replace(/\n$/, ''))}</pre><button class="btn sm" data-act="copyCode">복사</button></div>` : esc(seg).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')).join('');
 }
 function renderAI() {
-  const el = $('#ai'); if (!aiUI.open) { el.hidden = true; return; } el.hidden = false; const w = W(), u = S.usage;
+  const el = $('#ai');
+  if (!aiUI.open) { // 닫기: 오른쪽으로 미끄러져 나간 뒤에 숨긴다
+    if (el.hidden || el.classList.contains('out')) return;
+    if (!motionOn()) { el.hidden = true; regrow(); return; }
+    el.classList.remove('in'); el.classList.add('out'); regrow();
+    setTimeout(() => { if (!aiUI.open) el.hidden = true; el.classList.remove('out'); }, 200); return;
+  }
+  const opening = el.hidden || el.classList.contains('out'), tabChanged = renderAI.tab !== aiUI.tab; renderAI.tab = aiUI.tab;
+  el.hidden = false; el.classList.remove('out'); const w = W(), u = S.usage;
   const tabs = `<div class="ai-tabs">${[['chat', '대화'], ['cmp', '압축'], ['use', '사용량']].map(([k, t]) => `<button data-act="aiTab" data-id="${k}" class="${aiUI.tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
   let body = '', foot = '';
   if (aiUI.tab === 'chat') {
@@ -605,7 +691,12 @@ function renderAI() {
       <div class="row"><button class="btn sm" data-act="useReset">사용량 기록 지우기</button></div>`;
   }
   el.innerHTML = `<div class="ai-h">${tabs}<span class="grow"></span><span class="cnt" title="누적 사용 금액">$${u.usd.toFixed(3)}</span><button class="icon" data-act="ai" aria-label="AI 닫기">✕</button></div><div class="ai-b" id="aiBody">${body}</div>${foot ? `<div class="ai-f">${foot}</div>` : ''}`;
-  if (aiUI.tab === 'chat') { const b = $('#aiBody'); b.scrollTop = b.scrollHeight; }
+  const b = $('#aiBody'), nMsg = $$('.msg', b).length;
+  if (opening) { el.classList.remove('in'); void el.offsetWidth; el.classList.add('in'); regrow(); }
+  else if (tabChanged && motionOn()) b.classList.add('fade-in');
+  else if (aiUI.tab === 'chat' && nMsg > (renderAI.n || 0) && motionOn()) { const last = $$('.msg', b).pop(); if (last) last.classList.add('pop'); } // 새 말풍선만 떠오른다
+  renderAI.n = aiUI.tab === 'chat' ? nMsg : 0;
+  if (aiUI.tab === 'chat') b.scrollTop = b.scrollHeight;
 }
 
 // ───────── 마인드맵 ─────────
@@ -716,7 +807,7 @@ const A = {
   open(el) { S.workId = el.dataset.id; ui.tab = 'prompt'; save(); render(); window.scrollTo(0, 0); },
   tab(el) { ui.tab = el.dataset.id; render(); window.scrollTo(0, 0); if (ui.tab === 'rules') rulesAuto(); },
   close() { closeModal(); },
-  askOk() { const o = {}; $$('[data-ask]').forEach(f => o[f.dataset.ask] = f.type === 'checkbox' ? f.checked : f.value); const r = ask.res; ask.res = null; $('#modal').innerHTML = ''; r && r(o); },
+  askOk() { const o = {}; $$('[data-ask]').forEach(f => o[f.dataset.ask] = f.type === 'checkbox' ? f.checked : f.value); const r = ask.res; ask.res = null; modalOut(); r && r(o); },
   search() { openSearch(); }, io() { openIO(); }, settings() { openSettings(); }, vers() { openVers(); },
   ai() { aiUI.open = !aiUI.open; document.body.classList.toggle('ai-open', aiUI.open); renderAI(); },
   undo() { const u = ui.undo.pop(); if (!u) return; const w = find(S.works, u.wid); if (w) { const v = JSON.parse(u.ver), i = w.versions.findIndex(x => x.id === v.id); if (i >= 0) w.versions[i] = v; } $('#undoBtn').hidden = !ui.undo.length; save(); render(); toast('되돌렸습니다: ' + u.desc); },
@@ -798,7 +889,7 @@ const A = {
       const sel = $('#setModel'), cur = sel.value; sel.innerHTML = [...new Set([...ids, cur])].map(i => `<option ${i === cur ? 'selected' : ''}>${esc(i)}</option>`).join(''); toast(`사용할 수 있는 모델 ${ids.length}개를 불러왔습니다`);
     } catch (e) { toast('모델 목록을 불러오지 못했습니다: ' + e.message, 5000); }
   },
-  setSave() { const s = S.settings; s.apiKey = $('#setKey').value.trim(); s.model = ($('#setModelCustom').value.trim() || $('#setModel').value).replace(/^models\//, ''); s.priceIn = +$('#setIn').value || 0; s.priceOut = +$('#setOut').value || 0; s.krw = +$('#setKrw').value || 1400; s.temp = Math.min(2, Math.max(0, +$('#setTemp').value || 0)); s.theme = $('#setTheme').value; s.autoUpdate = $('#setAuto').checked; save(); closeModal(); render(); toast('설정을 저장했습니다'); },
+  setSave() { const s = S.settings; s.apiKey = $('#setKey').value.trim(); s.model = ($('#setModelCustom').value.trim() || $('#setModel').value).replace(/^models\//, ''); s.priceIn = +$('#setIn').value || 0; s.priceOut = +$('#setOut').value || 0; s.krw = +$('#setKrw').value || 1400; s.temp = Math.min(2, Math.max(0, +$('#setTemp').value || 0)); s.theme = $('#setTheme').value; s.motion = $('#setMotion').value; s.autoUpdate = $('#setAuto').checked; save(); closeModal(); render(); toast('설정을 저장했습니다'); },
 
   aiTab(el) { aiUI.tab = el.dataset.id; renderAI(); },
   quick(el) { const q = QUICK[+el.dataset.id]; if (q[1] === 'fill') { aiUI.draft = q[2]; renderAI(); const t = $('#aiIn'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } else aiSend(q[2], q[1]); },
@@ -828,7 +919,11 @@ const A = {
 
 // ───────── 이벤트 연결 ─────────
 function refreshMain() {
-  const v = V(); if (!v) return; const n = mainText(v).length, m = $('#mainMeter'); if (m) m.outerHTML = meter('mainMeter', n, L.MAIN, '메인 프롬프트');
+  const v = V(); if (!v) return; const n = mainText(v).length, m = $('#mainMeter');
+  if (m) { // 통째로 바꾸지 않고 값만 고친다(막대가 부드럽게 늘고 줄도록)
+    const t = document.createElement('div'); t.innerHTML = meter('mainMeter', n, L.MAIN, '메인 프롬프트'); const f = t.firstElementChild;
+    m.className = f.className; $('.cnt', m).textContent = $('.cnt', f).textContent; $('.bar i', m).style.width = $('.bar i', f).style.width;
+  }
   const b = $('#tabMain'); if (b) { b.textContent = nf(n); b.classList.toggle('over', n > L.MAIN); }
 }
 document.addEventListener('click', e => {
@@ -889,7 +984,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'Escape' && $('#modal').innerHTML) closeModal();
   else if (e.key === 'Enter' && t.dataset && t.dataset.ask && t.tagName === 'INPUT' && !e.isComposing) A.askOk();
 });
-window.addEventListener('resize', () => { if (ui.tab === 'mind') mmDraw(); });
+window.addEventListener('resize', () => { if (ui.tab === 'mind') mmDraw(); clearTimeout(regrow.t); regrow.t = setTimeout(() => { regrow(); tabInk(); }, 120); });
 
 (async function init() {
   await DB.open(); const loaded = await DB.get('state');
