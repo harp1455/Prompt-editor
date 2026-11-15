@@ -50,13 +50,13 @@ jobs:
       - run: node scripts/set-version.js
       - name: Build apk
         env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          SIGNING: ${{ secrets.ANDROID_SIGNING }}   # 형식: <비밀번호>:<키스토어 base64>, 키 별칭은 cps
         run: |
           cd android
           chmod +x gradlew
-          if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          if [ -n "$SIGNING" ]; then
+            KS_PASS="${SIGNING%%:*}"
+            echo "${SIGNING#*:}" | base64 -d > "$RUNNER_TEMP/release.jks"
             ./gradlew assembleRelease --no-daemon \
               -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.jks" \
               -Pandroid.injected.signing.store.password="$KS_PASS" \
@@ -64,7 +64,7 @@ jobs:
               -Pandroid.injected.signing.key.password="$KS_PASS"
             cp app/build/outputs/apk/release/app-release.apk "../CrackPromptStudio-$VERSION.apk"
           else
-            echo "::warning::서명 키(ANDROID_KEYSTORE_B64)가 없어 임시 키로 빌드합니다. 이 apk 는 다음 버전으로 덮어 설치할 수 없습니다."
+            echo "::warning::서명 키(ANDROID_SIGNING 시크릿)가 없어 임시 키로 빌드합니다. 이 apk 는 다음 버전으로 덮어 설치할 수 없습니다."
             ./gradlew assembleDebug --no-daemon
             cp app/build/outputs/apk/debug/app-debug.apk "../CrackPromptStudio-$VERSION-temp-key.apk"
           fi
