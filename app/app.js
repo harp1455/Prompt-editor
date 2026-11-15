@@ -127,7 +127,7 @@ function render() {
   if (!w) m.innerHTML = viewLibrary();
   else m.innerHTML = ({ prompt: viewPrompt, kb: viewKB, start: viewStart, preview: viewPreview, ideas: viewIdeas, mind: viewMind, info: viewInfo }[ui.tab] || viewPrompt)(w, v);
   $$('textarea.auto', m).forEach(grow);
-  if (w && ui.tab === 'prompt') sortable($('#navlist'), '.navitem', ids => { reorder(v.sections, ids); save(); render(); });
+  if (w && ui.tab === 'prompt') sortable($('#navlist'), '.navgrp', ids => { reorder(v.sections, ids); save(); render(); });
   if (w && ui.tab === 'kb') sortable($('#kblist'), '.card', ids => { reorder(v.kb, ids); save(); render(); });
   if (w && ui.tab === 'mind') { mmBind(); mmDraw(); }
   if (aiUI.open) renderAI();
@@ -142,12 +142,23 @@ function viewLibrary() {
     <button class="work new" data-act="workNew"><b>+ 새 작품</b><br><span class="hint">빈 작품으로 시작하거나,<br>기존 프롬프트를 붙여 넣어 자동 분할</span></button></div>`;
 }
 
+// 섹션 = "# " 대분류. 그 안의 "## " 줄은 하위 분류로 목록에 들여 써서 보여 주고, 누르면 그 줄로 이동한다.
+function subHeads(s) { const out = []; let pos = 0; for (const l of s.text.split('\n')) { if (/^## /.test(l)) out.push({ pos, title: l.replace(/^##\s*/, '').trim().slice(0, 40) || '(소제목)' }); pos += l.length + 1; } return out; }
+const subSig = s => subHeads(s).map(h => h.title).join('\u0001');
+function navHTML(v) {
+  return v.sections.map(s => `<div class="navgrp" data-id="${s.id}"><div class="navitem ${s.on ? '' : 'off'}" data-id="${s.id}" data-act="secGo"><span class="grip" title="끌어서 순서 변경">⋮⋮</span><span class="lbl">${esc(secLabel(s))}</span><span class="cnt num" data-cnt="${s.id}">${nf(s.text.length)}</span></div>${subHeads(s).map(h => `<div class="navsub ${s.on ? '' : 'off'}" data-act="subGo" data-id="${s.id}" data-pos="${h.pos}">${esc(h.title)}</div>`).join('')}</div>`).join('');
+}
+function goPos(secId, pos) {
+  const t = $(`[data-in="sec.text"][data-id="${secId}"]`); if (!t) return; const card = t.closest('.card'); card.scrollIntoView({ block: 'start' });
+  const end = t.value.indexOf('\n', pos); t.focus({ preventScroll: true }); try { t.setSelectionRange(pos, end < 0 ? t.value.length : end); } catch (e) { /* 무시 */ }
+  window.scrollBy(0, Math.max(0, (t.value.slice(0, pos).split('\n').length - 3) * 22)); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1200);
+}
 function viewPrompt(w, v) {
   const n = mainText(v).length;
   return `<div class="split">
   <aside class="secnav">
     ${meter('mainMeter', n, L.MAIN, '메인 프롬프트')}
-    <div class="navlist" id="navlist">${v.sections.map(s => `<div class="navitem ${s.on ? '' : 'off'}" data-id="${s.id}" data-act="secGo"><span class="grip" title="끌어서 순서 변경">⋮⋮</span><span class="lbl">${esc(secLabel(s))}</span><span class="cnt num" data-cnt="${s.id}">${nf(s.text.length)}</span></div>`).join('')}</div>
+    <div class="navlist" id="navlist">${navHTML(v)}</div>
     <div class="row"><button class="btn sm" data-act="secAdd">+ 섹션</button><button class="btn sm" data-act="secPaste">전체 붙여넣어 자동 분할</button></div>
     <label class="sw"><input type="checkbox" id="joinBlank" ${v.joinBlank ? 'checked' : ''}> 합칠 때 섹션 사이에 빈 줄 넣기</label>
     <span class="hint">섹션은 크랙에 붙일 때 위에서부터 순서대로 한 덩어리로 합쳐집니다. 꺼 둔 섹션은 합쳐지지 않습니다.</span>
@@ -581,7 +592,7 @@ const A = {
   undo() { const u = ui.undo.pop(); if (!u) return; const w = find(S.works, u.wid); if (w) { const v = JSON.parse(u.ver), i = w.versions.findIndex(x => x.id === v.id); if (i >= 0) w.versions[i] = v; } $('#undoBtn').hidden = !ui.undo.length; save(); render(); toast('되돌렸습니다: ' + u.desc); },
 
   async workNew() {
-    const r = await ask({ title: '새 작품', ok: '만들기', fields: [{ key: 'title', label: '작품 제목', value: '' }, { key: 'text', label: '기존 메인 프롬프트가 있으면 통째로 붙여 넣으세요 (# 제목 줄마다 섹션으로 자동 분할됩니다)', type: 'area', rows: 8 }, { key: 'deep', type: 'check', text: '## 소제목에서도 나누기' }] });
+    const r = await ask({ title: '새 작품', ok: '만들기', fields: [{ key: 'title', label: '작품 제목', value: '' }, { key: 'text', label: '기존 메인 프롬프트가 있으면 통째로 붙여 넣으세요 (# 제목 줄마다 섹션으로 자동 분할됩니다)', type: 'area', rows: 8 }, { key: 'deep', type: 'check', text: '## 소제목도 따로 떼어 별도 섹션으로 만들기 (보통은 끄세요)' }] });
     if (!r) return; const w = newWork(r.title.trim() || '새 작품'); if (r.text.trim()) w.versions[0].sections = splitPrompt(r.text, r.deep);
     S.works.push(w); S.workId = w.id; ui.tab = 'prompt'; save(); render();
   },
@@ -593,10 +604,11 @@ const A = {
   importPick() { const f = $('#filePick'); f.value = ''; f.click(); },
   importPaste() { const t = $('#importArea').value.trim(); if (t) importText(t); },
 
+  subGo(el) { goPos(el.dataset.id, +el.dataset.pos); },
   secGo(el) { const c = $('#sec-' + el.dataset.id); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } },
   secAdd() { const s = { id: uid(), label: '', text: '# 새 섹션\n', on: true }; V().sections.push(s); save(); render(); A.secGo({ dataset: { id: s.id } }); },
   async secPaste() {
-    const v = V(), r = await ask({ title: '프롬프트 전체 붙여 넣어 자동 분할', ok: '분할하기', note: '줄 맨 앞이 "# "인 곳마다 섹션으로 나눕니다. 나눈 섹션을 다시 합치면 원문과 글자 하나까지 같습니다.', fields: [{ key: 'text', label: '프롬프트 전문', type: 'area', rows: 12 }, { key: 'deep', type: 'check', text: '## 소제목에서도 나누기' }, { key: 'rep', type: 'check', text: '지금 있는 섹션을 지우고 바꾸기 (끄면 뒤에 덧붙임)', value: true }] });
+    const v = V(), r = await ask({ title: '프롬프트 전체 붙여 넣어 자동 분할', ok: '분할하기', note: '줄 맨 앞이 "# "(대분류)인 곳마다 섹션으로 나눕니다. "## " 소제목은 섹션 안에 남고 왼쪽 목록에 하위 항목으로 표시됩니다. 나눈 섹션을 다시 합치면 원문과 글자 하나까지 같습니다.', fields: [{ key: 'text', label: '프롬프트 전문', type: 'area', rows: 12 }, { key: 'deep', type: 'check', text: '## 소제목도 따로 떼어 별도 섹션으로 만들기 (보통은 끄세요)' }, { key: 'rep', type: 'check', text: '지금 있는 섹션을 지우고 바꾸기 (끄면 뒤에 덧붙임)', value: true }] });
     if (!r || !r.text.trim()) return; snap('자동 분할'); const parts = splitPrompt(r.text, r.deep); v.sections = r.rep ? parts : v.sections.concat(parts); save(); render(); toast(`${parts.length}개 섹션으로 나눴습니다`);
   },
   secUp(el) { const a = V().sections, i = a.findIndex(s => s.id === el.dataset.id); if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; save(); render(); } },
@@ -689,7 +701,7 @@ document.addEventListener('input', e => {
   if (t.id === 'searchIn') { drawSearch(); return; }
   if (t.id === 'aiIn') { aiUI.draft = t.value; return; }
   if (!k) return; const id = t.dataset.id;
-  if (k === 'sec.text') { const s = find(v.sections, id); s.text = t.value; $$(`[data-cnt="${id}"]`).forEach(x => x.textContent = nf(s.text.length)); $$(`[data-cnt2="${id}"]`).forEach(x => x.textContent = nf(s.text.length) + '자'); if (!s.label) { const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); } refreshMain(); }
+  if (k === 'sec.text') { const s = find(v.sections, id); s.text = t.value; $$(`[data-cnt="${id}"]`).forEach(x => x.textContent = nf(s.text.length)); $$(`[data-cnt2="${id}"]`).forEach(x => x.textContent = nf(s.text.length) + '자'); if (!s.label) { const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); } const sig = subSig(s); if (t._sig === undefined) t._sig = sig; if (t._sig !== sig || /^## /m.test(s.text)) { t._sig = sig; $('#navlist').innerHTML = navHTML(v); } refreshMain(); }
   else if (k === 'sec.label') { const s = find(v.sections, id); s.label = t.value; const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); }
   else if (k === 'kb.name') find(v.kb, id).name = t.value;
   else if (k === 'kb.text') { const s = find(v.kb, id); s.text = t.value; const c = $(`[data-kcnt="${id}"]`); c.textContent = `${s.text.length}/${L.KBC}`; c.className = 'cnt num ' + cntCls(s.text.length, L.KBC); }
