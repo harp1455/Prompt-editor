@@ -1,5 +1,8 @@
 {
   "appId": "app.crackprompt.studio",
   "appName": "프롬프트 스튜디오",
-  "webDir": "app"
+  "webDir": "app",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto"
+  }
 }
