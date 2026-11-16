@@ -238,3 +238,4 @@ build/icon.png, assets/logo.png   앱 아이콘 원본
 - 조치: `capacitor.config.json` 에 `android.adjustMarginsForEdgeToEdge: "auto"` 추가. Capacitor 가 상태 표시줄·내비게이션 바·카메라 구멍만큼 웹 화면에 여백을 준다(설치되는 Capacitor 7.6 의 `CapacitorWebView.edgeToEdgeHandler` 코드로 동작 확인).
 - 확인 못 한 것: 실제 기기에서의 결과. 상태 표시줄 뒤 색은 휴대폰의 밝게/어둡게 설정을 따르므로, 앱 테마를 휴대폰과 반대로 고정하면 맨 위 띠 색이 앱과 다를 수 있다. 키보드가 올라올 때 입력칸이 가려지는지도 사용자 확인 필요.
 
+- **빌드 확인**: Actions 성공 → `v1.0.8` 등록(exe·apk). 실제 기기 결과는 사용자 확인 대기.
