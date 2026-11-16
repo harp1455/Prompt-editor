@@ -100,8 +100,8 @@ const DB = {
 
 // ───────── 상태 ─────────
 let S = null;
-const ui = { subScope: { sec: true, kb: true, st: true }, tab: 'prompt', kbTest: '', mmSel: null, undo: [], memoShow: {} };
-const aiUI = { open: false, tab: 'chat', busy: false, ctx: { main: true, kb: true, start: true, ideas: false }, cmp: null, cmpTarget: '', cmpLevel: '중', draft: '' };
+const ui = { subScope: { sec: true, kb: true, st: true }, tab: 'prompt', kbTest: '', mmSel: null, undo: [], memoShow: {}, build: null };
+const aiUI = { open: false, tab: 'chat', busy: false, ctx: { main: true, kb: true, start: true, ideas: false }, cmp: null, cmpTarget: '', cmpLevel: '중', draft: '', batch: null };
 
 function newVersion(name = '버전 1') { return { id: uid(), name, memo: '', created: now(), updated: now(), joinBlank: false, intent: '', sections: [], kb: [], starts: [], subs: [], rules: { auto: true, by: {} } }; }
 function newWork(title = '새 작품') {
@@ -120,7 +120,7 @@ function sampleWork() {
   v.starts = [{ id: uid(), name: '첫 만남', text: '', sub: '' }];
   return w;
 }
-function fresh() { return { format: 1, works: [sampleWork()], workId: null, settings: { apiKey: '', model: MODELS[0].id, priceIn: MODELS[0].in, priceOut: MODELS[0].out, krw: 1400, temp: 1, theme: 'auto', motion: 'auto', models: [] }, usage: { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] } }; }
+function fresh() { return { format: 1, works: [sampleWork()], workId: null, settings: { apiKey: '', model: MODELS[0].id, priceIn: MODELS[0].in, priceOut: MODELS[0].out, krw: 1400, temp: 1, think: 'auto', theme: 'auto', motion: 'auto', models: [] }, usage: { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] } }; }
 function normalize(s) {
   const f = fresh();
   s.settings = Object.assign(f.settings, s.settings || {}); s.usage = Object.assign(f.usage, s.usage || {});
@@ -304,14 +304,14 @@ function viewPreview(w, v) {
 }
 
 function viewIdeas(w) {
-  return `<div class="head"><h2>아이디어 노트</h2><span class="hint">작품 단위로 저장됩니다. AI 답변도 여기로 보낼 수 있습니다.</span><span class="grow"></span><button class="btn" data-act="ideaAI">AI에게 요소 추천받기</button><button class="btn accent" data-act="noteAdd">+ 노트</button></div>
+  return `<div class="head"><h2>아이디어 노트</h2><span class="hint">작품 단위로 저장됩니다. AI 답변도 여기로 보낼 수 있습니다.</span><span class="grow"></span><button class="btn" data-act="buildOpen" title="노트·마인드맵을 내가 쓰던 프롬프트 뼈대에 맞춰 새 버전으로 구성">아이디어로 프롬프트 구성</button><button class="btn" data-act="ideaAI">AI에게 요소 추천받기</button><button class="btn accent" data-act="noteAdd">+ 노트</button></div>
   <div class="notes">${w.notes.map(n => `<div class="sticky" data-c="${n.c || 0}"><textarea class="auto" data-in="note.text" data-id="${n.id}" placeholder="떠오른 것을 적어 두세요">${esc(n.text)}</textarea><div class="acts"><button class="icon" data-act="noteColor" data-id="${n.id}">색</button><button class="icon" data-act="noteAsk" data-id="${n.id}" title="이 노트를 AI에게 보내 발전시키기">AI로 발전</button><button class="icon" data-act="copyNote" data-id="${n.id}">복사</button><button class="icon" data-act="noteDel" data-id="${n.id}">삭제</button></div></div>`).join('')}</div>
   ${w.notes.length ? '' : '<div class="note">노트가 없습니다. 캐릭터 설정, 장면 씨앗, 테스트 중 발견한 문제 등을 자유롭게 적어 두세요.</div>'}`;
 }
 
 function viewMind() {
   return `<div class="head"><h2>마인드맵</h2><span class="hint">노드를 끌어 옮기고, 빈 곳을 끌면 화면이 움직입니다.</span><span class="grow"></span>
-  <button class="btn sm accent" data-act="mmAdd">+ 하위 노드</button><button class="btn sm" data-act="mmEdit">이름 바꾸기</button><button class="btn sm bad" data-act="mmDel">삭제</button>
+  <button class="btn sm" data-act="buildOpen">아이디어로 프롬프트 구성</button><button class="btn sm accent" data-act="mmAdd">+ 하위 노드</button><button class="btn sm" data-act="mmEdit">이름 바꾸기</button><button class="btn sm bad" data-act="mmDel">삭제</button>
   <button class="btn sm" data-act="mmZoom" data-d="1.15">확대</button><button class="btn sm" data-act="mmZoom" data-d="0.87">축소</button><button class="btn sm" data-act="mmCenter">가운데로</button><button class="btn sm" data-act="mmCopy">개요로 복사</button></div>
   <div class="mm-view" id="mmView"><div class="mm-world" id="mmWorld"></div></div>`;
 }
@@ -543,6 +543,8 @@ function openSettings() {
    <div class="row"><label class="f" style="flex:1">환율 (1달러 = 원)<input type="number" id="setKrw" value="${s.krw}"></label><label class="f" style="flex:1">창의성 (temperature 0~2)<input type="number" step="0.1" min="0" max="2" id="setTemp" value="${s.temp}"></label>
    <label class="f" style="flex:1">화면 테마<select id="setTheme"><option value="auto" ${s.theme === 'auto' ? 'selected' : ''}>기기 설정 따름</option><option value="light" ${s.theme === 'light' ? 'selected' : ''}>밝게</option><option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>어둡게</option></select></label>
    <label class="f" style="flex:1">화면 움직임(애니메이션)<select id="setMotion"><option value="auto" ${s.motion === 'auto' ? 'selected' : ''}>기기 설정 따름</option><option value="on" ${s.motion === 'on' ? 'selected' : ''}>항상 켬</option><option value="off" ${s.motion === 'off' ? 'selected' : ''}>끔</option></select></label></div>
+   <label class="f">추론 단계 (모델이 답하기 전에 생각하는 양)<select id="setThink">${THINK.map(([k, t]) => `<option value="${k}" ${s.think === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+   <span class="hint">높을수록 검수·구성이 꼼꼼해지지만 느리고 "사고 토큰"이 늘어 비싸집니다. 모델이 지원하지 않는 단계(예: 3.8 Flash·4 Argon 의 "최소")를 고르면 한 단계 위로 자동 조정합니다. AI 창 위쪽에서도 바꿀 수 있습니다.</span>
    <span class="hint">AI 요청은 모든 안전 설정을 끈 상태(OFF)로 보냅니다.</span>
    <div class="note"><div class="row"><b>앱 버전 ${esc(INFO.version)}</b><span class="grow"></span><button class="btn sm" data-act="updCheck">업데이트 확인</button></div><div class="hint" id="updStatus">${esc(updText())}</div>
    <label class="sw"><input type="checkbox" id="setAuto" ${s.autoUpdate !== false ? 'checked' : ''}>앱을 켤 때마다 새 버전 자동 확인</label></div>
@@ -550,27 +552,40 @@ function openSettings() {
 }
 
 // ───────── Gemini ─────────
-async function gemini({ system, contents, temp, kind, json }) {
+// ───────── 추론(thinking) 단계 ─────────
+// Gemini 3 이후는 thinkingLevel(minimal/low/medium/high), 2.5 이하는 thinkingBudget(토큰 수)을 쓴다.
+// 모델마다 받는 값이 달라서(예: 3.8 Flash·4 Argon 은 minimal 불가) 400 이 나면 한 단계 올려 다시 보내고, 그래도 안 되면 추론 설정 없이 보낸다.
+const THINK = [['auto', '기본 (모델이 정함)'], ['minimal', '최소 (가장 빠름·저렴)'], ['low', '낮음'], ['medium', '중간'], ['high', '높음 (가장 꼼꼼·비쌈)']];
+const thinkName = k => (THINK.find(t => t[0] === k) || THINK[0])[1].split(' ')[0];
+const legacyModel = m => /gemini-(1\.|2\.0|2\.5)/.test(m);
+function thinkCfg(model, lv) {
+  if (!lv || lv === 'auto') return null;
+  if (legacyModel(model)) return { thinkingBudget: { minimal: /pro/.test(model) ? 128 : 0, low: 1024, medium: 8192, high: 24576 }[lv] };
+  return { thinkingLevel: lv };
+}
+async function gemini({ system, contents, temp, kind, json, think }) {
   const st = S.settings; if (!st.apiKey) { openSettings(); throw new Error('설정에서 Gemini API 키를 먼저 넣어 주세요.'); }
   const model = st.model.replace(/^models\//, '');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const cats = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_CIVIC_INTEGRITY'];
   // 모델마다 허용하는 값이 달라 400이 나면 다음 조합으로 재시도한다. 어느 조합이든 "차단 없음"이다.
   const tries = [[cats, 'OFF'], [cats, 'BLOCK_NONE'], [cats.slice(0, 4), 'BLOCK_NONE']];
-  let last;
-  for (const [c, th] of tries) {
-    const body = { contents, generationConfig: Object.assign({ temperature: temp ?? st.temp }, json ? { responseMimeType: 'application/json' } : {}), safetySettings: c.map(x => ({ category: x, threshold: th })) };
+  const lvAsk = think || st.think || 'auto'; let lv = lvAsk, last, ti = 0;
+  for (let guard = 0; guard < 8 && ti < tries.length; guard++) {
+    const [c, th] = tries[ti], tc = thinkCfg(model, lv);
+    const body = { contents, generationConfig: Object.assign({ temperature: temp ?? st.temp }, json ? { responseMimeType: 'application/json' } : {}, tc ? { thinkingConfig: tc } : {}), safetySettings: c.map(x => ({ category: x, threshold: th })) };
     if (system) body.systemInstruction = { parts: [{ text: system }] };
     let res; try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': st.apiKey }, body: JSON.stringify(body) }); }
     catch (e) { throw new Error('네트워크 오류: 인터넷 연결을 확인해 주세요. (' + e.message + ')'); }
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       const em = (j.error && j.error.message) || ''; last = new Error(`API 오류 ${res.status}: ${em || '알 수 없는 오류'}${res.status === 404 ? ' — 설정에서 모델 이름을 확인해 주세요.' : res.status === 429 ? ' — 사용량 한도입니다. 잠시 뒤 다시 시도해 주세요.' : ''}`);
-      if (res.status === 400 && /safety|threshold|categor|harm/i.test(em)) continue; throw last;
+      if (res.status === 400 && tc && /think|budget|level|reason/i.test(em)) { lv = lv === 'minimal' ? 'low' : 'auto'; continue; } // 이 모델이 받지 않는 추론 단계
+      if (res.status === 400 && /safety|threshold|categor|harm/i.test(em)) { ti++; continue; } throw last;
     }
     const u = j.usageMetadata || {}, inTok = u.promptTokenCount || 0, think = u.thoughtsTokenCount || 0, outTok = (u.candidatesTokenCount || 0) + think;
     const usd = (inTok * st.priceIn + outTok * st.priceOut) / 1e6;
-    const usage = { t: now(), model, kind, inTok, outTok, think, usd };
+    const usage = { t: now(), model, kind, inTok, outTok, think, usd, lv: lv === lvAsk ? lv : lv + '(' + lvAsk + ' 불가)' };
     S.usage.calls++; S.usage.inTok += inTok; S.usage.outTok += outTok; S.usage.usd += usd; S.usage.log.unshift(usage); S.usage.log.length = Math.min(S.usage.log.length, 100); save();
     const cand = (j.candidates || [])[0], text = ((cand && cand.content && cand.content.parts) || []).filter(p => !p.thought).map(p => p.text || '').join('');
     if (!text) throw new Error(`응답이 비어 있습니다. (사유: ${(j.promptFeedback && j.promptFeedback.blockReason) || (cand && cand.finishReason) || '알 수 없음'})`);
@@ -578,7 +593,9 @@ async function gemini({ system, contents, temp, kind, json }) {
   }
   throw last;
 }
-const costStr = u => `입력 ${nf(u.inTok)} · 출력 ${nf(u.outTok)}${u.think ? ` (사고 ${nf(u.think)})` : ''} 토큰 · $${u.usd.toFixed(4)} ≈ ${nf(Math.round(u.usd * S.settings.krw * 10) / 10)}원`;
+const costStr = u => `${u.lv && u.lv !== 'auto' ? `추론 ${esc(u.lv.replace(/^(\w+)/, m => thinkName(m)))} · ` : ''}입력 ${nf(u.inTok)} · 출력 ${nf(u.outTok)}${u.think ? ` (사고 ${nf(u.think)})` : ''} 토큰 · $${u.usd.toFixed(4)} ≈ ${nf(Math.round(u.usd * S.settings.krw * 10) / 10)}원`;
+// 여러 번 부른 요청의 사용량을 하나로 합친다(전체 압축, 극단 압축의 여러 차례)
+const sumUsage = list => list.reduce((a, u) => u ? { t: u.t, model: u.model, kind: u.kind, lv: u.lv, inTok: a.inTok + u.inTok, outTok: a.outTok + u.outTok, think: a.think + (u.think || 0), usd: a.usd + u.usd } : a, { inTok: 0, outTok: 0, think: 0, usd: 0 });
 
 const SYS_BASE = `너는 "크랙(Crack)"이라는 AI 캐릭터 채팅 플랫폼의 프롬프트 제작을 돕는 공동 설계자다. 한국어로 답한다.
 [플랫폼 조건] 글자수는 UTF-16 기준. 메인 프롬프트 ${L.MAIN}자. Knowledge_Base(로어북) ${L.KBN}슬롯·슬롯당 ${L.KBC}자·슬롯당 트리거 ${L.TRG}개·동시 발동 최대 ${L.FIRE}슬롯(트리거 기반이며 메인 프롬프트보다 인식률이 낮음). 시작상황 ${L.STN}개·각 ${L.STC}자(HUD·이미지 주소 포함). 시작상황 서브 컨텍스트 ${L.SUB}자(초반 몇 턴만 인식). {{user}}=유저, {{char}}=캐릭터. 대상 모델은 주로 Claude Opus·Fable 계열과 Gemini 계열.
@@ -636,7 +653,12 @@ const SYS_CMP = level => `너는 LLM 롤플레이 시스템 프롬프트 압축 
 3. 그대로 둘 것: 고유명사, {{user}}/{{char}}와 🅄🄲 같은 ID, 이모지, 출력 형식 예시(HUD·상태창·대사 서식·코드블록), 한국어로 출력되어야 하는 예시 문장, 태그·키 이름, 마크다운 헤더(#) 구조.
 4. 금지: 文言文, 일본식 한자, 한국식 한자 조어, 뜻이 불분명한 축약. 모델이 바로 읽을 수 있는 표현만 쓴다.
 5. 조사·어미·중복 수식은 덜어내고 명사형으로 끝내며, 나열은 기호로 잇는다.
-[강도: ${level}] ${level === '약' ? '조사·중복 정리 위주. 한자 치환은 최소한으로.' : level === '강' ? '가능한 최대로 압축. 단 2·3·4번은 반드시 지킨다.' : '지시문은 한자·기호로 적극 치환하되 가독성을 유지.'}
+[강도: ${level}] ${level === '약' ? '조사·중복 정리 위주. 한자 치환은 최소한으로.' : level === '강' ? '가능한 최대로 압축. 단 2·3·4번은 반드시 지킨다.' : level === '극단' ? `목표: 원문 대비 30% 이상 감소. 표현 치환만으로 부족하면 구조까지 줄인다. 이 강도에서는 2번을 다음처럼 해석한다 — "서로 다른 규칙·조건·예외·수치"는 모두 남기되 아래는 허용:
+ a. 같은 뜻의 규칙이 여러 곳에 반복되면 한 곳으로 합친다(각 위치의 조건·예외는 합친 문장에 모두 남긴다).
+ b. 규칙을 다시 풀어 설명하는 부연, 이유 설명, 강조용 수식("반드시 꼭 절대로" 등 겹친 강조), 서론 문장을 지운다.
+ c. 서술문을 "키:값", "조건→결과", "A/B/C" 같은 표기로 바꾼다. 여러 줄 목록은 한 줄 나열로 묶는다.
+ d. 규칙을 되풀이할 뿐인 예시는 하나만 남긴다. 단 3번의 출력 형식 예시(HUD·상태창·대사 서식)는 그대로 둔다.
+ e. 30%는 목표일 뿐이다. 더 줄이면 뜻이 바뀌는 지점에서 멈추고, 출력 끝에 <<<한계>>> 한 줄로 어디가 왜 더 못 줄었는지 적는다.` : '지시문은 한자·기호로 적극 치환하되 가독성을 유지.'}
 [출력 형식 — 이것만 출력]
 <<<압축>>>
 (압축된 텍스트)
@@ -649,16 +671,188 @@ function cmpTargets() {
   v.starts.forEach((s, i) => { o.push({ key: 'st:' + s.id + ':text', label: `시작상황 ${i + 1} 첫 장면 (${s.text.length}자)`, get: () => s.text, set: t => s.text = t }); o.push({ key: 'st:' + s.id + ':sub', label: `시작상황 ${i + 1} 서브 컨텍스트 (${s.sub.length}자)`, get: () => s.sub, set: t => s.sub = t }); });
   return o;
 }
+// 묶음 대상: 한 번에 여러 항목을 차례로 압축한다. 섹션 경계·로어북 슬롯 경계를 지키기 위해 항목마다 따로 보낸다.
+const CMP_ALL = [['all:main', '전체 — 메인 프롬프트 (켜 둔 섹션 모두)'], ['all:kb', '전체 — 로어북 (켜 둔 슬롯 모두)'], ['all:st', '전체 — 시작상황 (첫 장면·서브 컨텍스트 모두)'], ['all:every', '전체 — 위 셋 모두']];
+function cmpGroup(key) {
+  const v = V(), ts = cmpTargets(), on = t => { const [k, id] = t.key.split(':'); return k === 'sec' ? find(v.sections, id).on : k === 'kb' ? find(v.kb, id).on : true; };
+  const pick = { 'all:main': t => t.key.startsWith('sec:'), 'all:kb': t => t.key.startsWith('kb:'), 'all:st': t => t.key.startsWith('st:'), 'all:every': () => true }[key];
+  return pick ? ts.filter(t => pick(t) && on(t) && t.get().trim()) : null;
+}
+const subHint = () => V().subs.some(subOk) ? '\n이 작품의 치환 규칙(원래 표현=기호): ' + V().subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ') + ' — 원래 표현이 나오면 기호로 바꾸고, 이 기호들은 다른 것으로 바꾸지 않는다.' : '';
+function cmpParse(text) {
+  const m = text.match(/<<<압축>>>\n?([\s\S]*?)\n?<<<끝>>>/); const after = (m ? m[1] : text).replace(/^```[^\n]*\n|\n```$/g, '');
+  let notes = m ? text.slice(text.indexOf('<<<끝>>>') + 7).trim() : ''; const lim = notes.match(/<<<한계>>>\s*([\s\S]*)/);
+  if (lim) notes = notes.slice(0, lim.index).trim(); return { after, notes, limit: lim ? lim[1].trim() : '' };
+}
+// 텍스트 하나를 압축한다. 극단 단계는 30%에 못 미치면 결과를 다시 넣어 최대 두 번 더 줄인다(더 못 줄이면 멈춤).
+const EXTREME = 0.3;
+async function compressText(before, level, onPass) {
+  const ask = (text, extra) => gemini({ system: SYS_CMP(level), contents: [{ role: 'user', parts: [{ text: `아래 텍스트를 압축하라. 현재 ${text.length}자.${extra || ''}${subHint()}\n<<<원문>>>\n${text}\n<<<원문 끝>>>` }] }], temp: 0.3, kind: level === '극단' ? '극단 압축' : '압축' });
+  const r = await ask(before), out = cmpParse(r.text), us = [r.usage]; let best = out.after.length < before.length ? out.after : before, notes = out.notes, limit = out.limit, passes = 1;
+  if (level === '극단' && before.length >= 150) {
+    for (let k = 0; k < 2 && 1 - best.length / before.length < EXTREME; k++) {
+      if (onPass) onPass(passes + 1);
+      const cut = Math.round((1 - best.length / before.length) * 100), goal = Math.ceil(before.length * (1 - EXTREME));
+      const r2 = await ask(best, `\n이것은 이미 한 번 압축한 결과다. 처음 원문은 ${before.length}자였고 지금까지 ${cut}% 줄었다. 목표는 ${goal}자 이하(30% 감소). 남은 중복 규칙, 부연·이유 설명, 겹친 강조, 풀어 쓴 서술을 더 줄여라. 앞 단계에서 남긴 규칙·조건·예외·수치는 하나도 빠뜨리지 않는다. 더 줄이면 뜻이 바뀐다면 그대로 두고 <<<한계>>>에 이유를 적어라.`);
+      us.push(r2.usage); passes++; const o2 = cmpParse(r2.text);
+      if (o2.limit) limit = o2.limit; if (o2.after.length >= best.length) break; best = o2.after; if (o2.notes) notes = notes ? notes + '\n' + o2.notes : o2.notes;
+    }
+  }
+  return { after: best, notes, limit, passes, usage: sumUsage(us) };
+}
+// 압축 결과 자동 점검: 원문에 있던 ID·숫자·주소·헤더·코드블록이 사라졌는지 본다(뜻이 바뀌었을 수 있는 신호)
+function cmpCheck(before, after) {
+  const w = [], v = V(), toks = ['{{user}}', '{{char}}', '🅄', '🄲', ...(v ? v.subs.filter(subOk).map(r => r.short) : [])];
+  const lost = [...new Set(toks)].filter(t => t && before.includes(t) && !after.includes(t)); if (lost.length) w.push('사라진 표기: ' + lost.join(' '));
+  const nums = x => new Set((x.match(/\d+(?:[.,]\d+)*/g) || [])), na = nums(after), ln = [...nums(before)].filter(n => !na.has(n)); if (ln.length) w.push('사라진 숫자: ' + ln.slice(0, 8).join(', ') + (ln.length > 8 ? ' 외' : ''));
+  const urls = x => x.match(/https?:\/\/\S+/g) || [], lu = urls(before).filter(u => !after.includes(u)); if (lu.length) w.push(`바뀌거나 사라진 주소(이미지 등) ${lu.length}개`);
+  const hd = x => (x.match(/^#+\s/gm) || []).length; if (hd(after) < hd(before)) w.push(`헤더(#) ${hd(before)}개 → ${hd(after)}개`);
+  const cb = x => (x.match(/```/g) || []).length; if (cb(after) !== cb(before)) w.push('코드블록 개수가 달라짐');
+  return w;
+}
+const pct = (a, b) => a ? Math.round((1 - b / a) * 100) : 0;
 function openCompress(key) { aiUI.open = true; aiUI.tab = 'cmp'; aiUI.cmpTarget = key; aiUI.cmp = null; document.body.classList.add('ai-open'); renderAI(); }
 async function runCompress() {
-  const t = cmpTargets().find(x => x.key === aiUI.cmpTarget); if (!t || aiUI.busy) return; const before = t.get(); if (!before.trim()) { toast('비어 있는 항목입니다'); return; }
-  aiUI.busy = true; aiUI.cmp = null; renderAI();
+  if (aiUI.busy) return; if (cmpGroup(aiUI.cmpTarget)) return runBatch();
+  const t = cmpTargets().find(x => x.key === aiUI.cmpTarget); if (!t) return; const before = t.get(); if (!before.trim()) { toast('비어 있는 항목입니다'); return; }
+  aiUI.busy = true; aiUI.cmp = null; aiUI.batch = null; aiUI.pass = 1; renderAI();
   try {
-    const r = await gemini({ system: SYS_CMP(aiUI.cmpLevel), contents: [{ role: 'user', parts: [{ text: `아래 텍스트를 압축하라. 현재 ${before.length}자.${V().subs.some(subOk) ? '\n이 작품의 치환 규칙(원래 표현=기호): ' + V().subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ') + ' — 원래 표현이 나오면 기호로 바꾸고, 이 기호들은 다른 것으로 바꾸지 않는다.' : ''}\n<<<원문>>>\n${before}\n<<<원문 끝>>>` }] }], temp: 0.3, kind: '압축' });
-    const m = r.text.match(/<<<압축>>>\n?([\s\S]*?)\n?<<<끝>>>/); const after = (m ? m[1] : r.text).replace(/^```[^\n]*\n|\n```$/g, ''); const notes = m ? r.text.slice(r.text.indexOf('<<<끝>>>') + 7).trim() : '';
-    aiUI.cmp = { key: t.key, label: t.label, before, after, notes, usage: r.usage };
+    const r = await compressText(before, aiUI.cmpLevel, n => { aiUI.pass = n; renderAI(); });
+    aiUI.cmp = { key: t.key, label: t.label, before, after: r.after, notes: r.notes, limit: r.limit, passes: r.passes, level: aiUI.cmpLevel, usage: r.usage, warn: cmpCheck(before, r.after) };
   } catch (e) { aiUI.cmp = { err: e.message }; }
   aiUI.busy = false; renderAI();
+}
+// 전체 압축: 두 개씩 동시에 보내고, 끝난 것부터 화면에 채운다. 어느 항목이 실패해도 나머지는 계속한다.
+async function runBatch() {
+  const list = cmpGroup(aiUI.cmpTarget); if (!list.length) { toast('압축할 내용이 없습니다'); return; }
+  const lv = aiUI.cmpLevel, b = aiUI.batch = { level: lv, scope: aiUI.cmpTarget, done: 0, stop: false, running: true, items: list.map(t => ({ key: t.key, label: t.label.replace(/ \(\d[\d,]*자\)$/, ''), before: t.get(), st: 'wait', pick: true })) };
+  aiUI.busy = true; aiUI.cmp = null; renderAI();
+  let next = 0; const work = async () => {
+    while (next < b.items.length && !b.stop && aiUI.batch === b) {
+      const it = b.items[next++]; it.st = 'run'; renderAI();
+      try { const r = await compressText(it.before, lv); Object.assign(it, { st: 'ok', after: r.after, notes: r.notes, limit: r.limit, passes: r.passes, usage: r.usage, warn: cmpCheck(it.before, r.after) }); it.pick = r.after.length < it.before.length; }
+      catch (e) { it.st = 'err'; it.err = e.message; it.pick = false; if (/API 키|네트워크|429/.test(e.message)) b.stop = true; }
+      b.done++; if (aiUI.batch === b) renderAI();
+    }
+  };
+  await Promise.all([work(), work()]);
+  b.items.forEach(it => { if (it.st === 'wait') { it.st = 'skip'; it.pick = false; } }); b.running = false;
+  b.usage = sumUsage(b.items.map(i => i.usage)); aiUI.busy = false; if (aiUI.batch === b) renderAI();
+}
+function batchHTML(b) {
+  const ok = b.items.filter(i => i.st === 'ok'), sel = ok.filter(i => i.pick), sb = sel.reduce((n, i) => n + i.before.length, 0), sa = sel.reduce((n, i) => n + i.after.length, 0);
+  let mainNote = '';
+  if (b.scope === 'all:main' || b.scope === 'all:every') { const v = V(), cur = mainText(v).length, diff = sel.filter(i => i.key.startsWith('sec:')).reduce((n, i) => n + i.after.length - i.before.length, 0); mainNote = ` · 메인 프롬프트 ${nf(cur)} → ${nf(cur + diff)}자`; }
+  const stTxt = { wait: '대기', run: '<span class="spin"></span> 압축 중', ok: '', err: '실패', skip: '건너뜀' };
+  return `<div class="note ${b.running ? '' : sa < sb ? '' : 'warn'}"><b class="num">${b.running ? `${b.done} / ${b.items.length} 처리 중…` : `${ok.length}개 완료${b.items.length > ok.length ? ` · ${b.items.length - ok.length}개 실패·건너뜀` : ''}`}</b>
+      ${sel.length ? `<br>고른 ${sel.length}개: ${nf(sb)} → ${nf(sa)}자 (${pct(sb, sa)}% 절약)${mainNote}` : ''}</div>
+    ${b.running ? `<div class="prog"><i style="width:${Math.round(b.done / b.items.length * 100)}%"></i></div>` : ''}
+    <div class="blist">${b.items.map((it, i) => `<div class="bitem ${it.st}">
+      <div class="row">${it.st === 'ok' ? `<label class="sw"><input type="checkbox" data-in="cmp.pick" data-id="${i}" ${it.pick ? 'checked' : ''}></label>` : ''}<b class="grow">${esc(it.label)}</b>
+      ${it.st === 'ok' ? `<span class="num ${it.after.length < it.before.length ? '' : 'bad-t'}" data-bc="${i}">${nf(it.before.length)}→${nf(it.after.length)} (${pct(it.before.length, it.after.length)}%)</span>` : `<span class="hint">${stTxt[it.st]}</span>`}</div>
+      ${it.st === 'err' ? `<div class="msg err">${esc(it.err)}</div>` : ''}
+      ${it.st === 'ok' ? `${it.warn.length ? `<div class="note warn">확인 필요 — ${esc(it.warn.join(' · '))}</div>` : ''}${it.limit ? `<div class="hint">더 못 줄인 이유: ${esc(it.limit)}</div>` : ''}
+        <details><summary class="hint">결과 보기·고치기${it.passes > 1 ? ` (${it.passes}차례 압축)` : ''}</summary><textarea rows="8" data-in="cmp.bout" data-id="${i}" spellcheck="false">${esc(it.after)}</textarea>${it.notes ? `<div class="hint">${esc(it.notes)}</div>` : ''}<details><summary class="hint">원문</summary><pre class="code">${esc(it.before)}</pre></details></details>` : ''}
+    </div>`).join('')}</div>
+    ${b.usage ? `<div class="usage">합계 ${costStr(b.usage)}</div>` : ''}
+    <div class="row">${b.running ? '<button class="btn" data-act="cmpStop">멈추기</button>' : `<button class="btn accent" data-act="cmpBatchApply" ${sel.length ? '' : 'disabled'}>고른 ${sel.length}개 바꾸기</button><button class="btn" data-act="cmpDrop">버리기</button>`}</div>`;
+}
+
+// ───────── 아이디어 → 프롬프트 구성 ─────────
+// 아이디어 노트·마인드맵을 재료로, 사용자가 이미 써 온 프롬프트(뼈대)의 섹션 순서·헤더·표기법·문체를 그대로 따라 새 프롬프트를 짓는다.
+// 결과는 언제나 "새 버전"으로만 들어간다(기존 버전을 덮어쓰지 않음).
+const SYS_BUILD = `너는 "크랙(Crack)" AI 캐릭터 채팅 플랫폼의 시스템 프롬프트 작가다. 제작자의 아이디어 메모를, 제작자가 평소 쓰는 프롬프트 뼈대에 맞춰 완성된 프롬프트로 구성한다.
+[플랫폼 조건] 글자수는 UTF-16 기준. 메인 프롬프트 최대 ${L.MAIN}자. 로어북 최대 ${L.KBN}슬롯·슬롯당 ${L.KBC}자·슬롯당 트리거 최대 ${L.TRG}개(트리거가 대화에 나오면 그 슬롯이 발동, 동시 발동 최대 ${L.FIRE}슬롯). 시작상황 최대 ${L.STN}개·첫 장면 ${L.STC}자·서브 컨텍스트 ${L.SUB}자. {{user}}=유저, {{char}}=캐릭터.
+[뼈대를 따르는 법]
+1. 뼈대의 섹션 순서와 각 섹션의 마크다운 헤더(#)를 그대로 쓴다. 헤더 이름은 새 작품에 맞지 않을 때만 고친다. 섹션을 늘리거나 줄이는 것은 아이디어에 꼭 필요할 때만.
+2. 뼈대의 표기법을 그대로 따른다: 목록 기호, 줄바꿈 방식, 기호·약어(→ / · = 等), 한자 압축 여부, {{user}}/{{char}} 또는 🅄/🄲 같은 ID 표기, 치환 기호, 말투(명령형·명사형 종결 등).
+3. 캐릭터·세계관과 무관한 운영 섹션(출력 규칙, 문체, 금지 사항, 진행 방식, HUD·상태창 형식, 기억 주석 형식 등)은 뼈대 내용을 거의 그대로 재사용하되, 새 작품과 충돌하는 고유명사·설정만 바꾼다.
+4. 캐릭터·관계·세계관·사건처럼 작품마다 다른 섹션은 아이디어를 재료로 새로 쓴다. 뼈대의 옛 캐릭터 설정은 남기지 않는다.
+5. 아이디어에 없는 필수 정보는 아이디어와 어울리게 최소한으로 보충하고, 보충한 것을 notes 에 빠짐없이 적는다. 아이디어끼리 충돌하면 더 구체적인 쪽을 따르고 notes 에 적는다.
+6. 메인 프롬프트에는 늘 지켜야 할 핵심만, 특정 장소·인물·사건처럼 가끔 필요한 세부는 로어북으로 보낸다(로어북을 만들라는 요청이 있을 때).
+7. 성인 대상 창작물(BL 포함)일 수 있다. 소재를 순화하거나 훈계하지 않는다.
+[출력] 아래 JSON 하나만 출력한다. 설명문·코드블록 표시 금지.
+{"sections":[{"label":"섹션 이름(헤더와 같으면 빈 문자열)","text":"섹션 본문(헤더 줄 포함)"}],"kb":[{"name":"슬롯 이름","triggers":["트리거"],"text":"내용"}],"starts":[{"name":"시작상황 이름","text":"첫 장면","sub":"서브 컨텍스트"}],"notes":"보충·판단한 점을 짧은 목록으로"}`;
+function buildSources() {
+  const o = []; S.works.forEach(w => w.versions.forEach(v => { const n = mainText(v).length; if (n > 30) o.push({ key: w.id + '/' + v.id, w, v, n, label: `${w.title} · ${v.name} (섹션 ${v.sections.length}개 · ${nf(n)}자)` }); }));
+  return o.sort((a, b) => (b.v.updated || 0) - (a.v.updated || 0));
+}
+function openBuild() {
+  const w = W(); if (!w) return; const srcs = buildSources(), cur = srcs.find(x => x.key === w.id + '/' + V().id);
+  if (!ui.build || ui.build.wid !== w.id) ui.build = { wid: w.id, src: (cur || srcs[0] || { key: 'none' }).key, notes: {}, mind: true, kb: true, st: true, target: 0, extra: '', res: null, busy: false };
+  const b = ui.build; if (b.res && !b.busy) return showBuild();
+  const notes = w.notes.filter(n => n.text.trim()), nodes = (w.mind && w.mind.nodes || []).filter(n => n.text && n.text.trim()).length;
+  const src = srcs.find(x => x.key === b.src), tgt = b.target || Math.min(L.MAIN, Math.max(2000, src ? src.n : 5000));
+  modal(`<h3>아이디어로 프롬프트 구성</h3>
+   <span class="hint">아이디어 노트·마인드맵을 재료로, 고른 프롬프트의 <b>섹션 순서·헤더·표기법·문체</b>를 그대로 따라 새 프롬프트를 만듭니다. 출력 규칙·문체처럼 작품과 무관한 섹션은 뼈대 내용을 거의 그대로 가져옵니다. 결과는 확인 후 <b>새 버전</b>으로만 추가됩니다.</span>
+   <label class="f">뼈대로 쓸 프롬프트<select id="buildSrc">${srcs.map(x => `<option value="${x.key}" ${x.key === b.src ? 'selected' : ''}>${esc(x.label)}${x.w.id === w.id && x.v.id === V().id ? ' — 지금 버전' : ''}</option>`).join('')}<option value="none" ${b.src === 'none' ? 'selected' : ''}>뼈대 없이 (AI 기본 구성)</option></select></label>
+   <b>재료</b>
+   <div class="blist">${notes.length ? notes.map(n => `<label class="sw bpick"><input type="checkbox" data-in="build.note" data-id="${n.id}" ${b.notes[n.id] !== false ? 'checked' : ''}><span>${esc(n.text.trim().replace(/\s+/g, ' ').slice(0, 90))}${n.text.trim().length > 90 ? '…' : ''}</span></label>`).join('') : '<div class="hint">아이디어 노트가 없습니다.</div>'}
+   <label class="sw bpick"><input type="checkbox" id="buildMind" ${b.mind && nodes ? 'checked' : ''} ${nodes ? '' : 'disabled'}><span>마인드맵 (노드 ${nodes}개)</span></label></div>
+   <div class="row"><b>함께 만들 것</b><label class="sw"><input type="checkbox" id="buildKb" ${b.kb ? 'checked' : ''}>로어북</label><label class="sw"><input type="checkbox" id="buildSt" ${b.st ? 'checked' : ''}>시작상황</label></div>
+   <label class="f">메인 프롬프트 목표 글자수 (최대 ${nf(L.MAIN)})<input type="number" id="buildTarget" min="500" max="${L.MAIN}" step="100" value="${tgt}"></label>
+   <label class="f">추가 요청 (선택)<textarea id="buildExtra" rows="3" placeholder="예: 시점은 3인칭 관찰자로, 상태창은 빼고, 관계 진전은 느리게">${esc(b.extra)}</textarea></label>
+   <span class="hint">추론 단계: ${thinkName(S.settings.think)} — 구성은 "높음"을 권합니다(AI 창 위쪽·설정에서 변경). 결과가 길어 요청 한 번에 수십 원이 들 수 있습니다.</span>
+   ${b.busy ? '<div class="msg model"><span class="spin"></span> 구성하는 중… 1~2분 걸릴 수 있습니다. 창을 닫아도 계속 진행되며, 끝나면 알려 드립니다.</div>' : ''}
+   ${b.err ? `<div class="msg err">${esc(b.err)}</div>` : ''}
+   <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn accent" data-act="buildRun" ${b.busy ? 'disabled' : ''}>구성하기</button></div>`, true);
+}
+function buildParse(text) {
+  let t = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''); let j;
+  try { j = JSON.parse(t); } catch (e) { const a = t.indexOf('{'), z = t.lastIndexOf('}'); if (a < 0 || z < a) throw new Error('AI 응답을 읽지 못했습니다(형식 오류). 다시 시도해 주세요.'); j = JSON.parse(t.slice(a, z + 1)); }
+  const str = x => typeof x === 'string' ? x : x == null ? '' : String(x);
+  const sections = (Array.isArray(j.sections) ? j.sections : []).map(x => ({ label: str(x.label).trim(), text: str(x.text).replace(/\s+$/, '') })).filter(x => x.text.trim());
+  if (!sections.length) throw new Error('AI가 섹션을 만들지 못했습니다. 재료를 더 넣거나 다시 시도해 주세요.');
+  const kb = (Array.isArray(j.kb) ? j.kb : []).slice(0, L.KBN).map(x => ({ name: str(x.name).trim(), triggers: (Array.isArray(x.triggers) ? x.triggers : str(x.triggers).split(/[,\n]/)).map(y => str(y).trim()).filter(Boolean).slice(0, L.TRG), text: str(x.text) })).filter(x => x.text.trim() || x.name);
+  const starts = (Array.isArray(j.starts) ? j.starts : []).slice(0, L.STN).map(x => ({ name: str(x.name).trim(), text: str(x.text), sub: str(x.sub) })).filter(x => x.text.trim() || x.sub.trim());
+  return { sections, kb, starts, notes: Array.isArray(j.notes) ? j.notes.map(str).join('\n') : str(j.notes) };
+}
+async function runBuild() {
+  const w = W(), b = ui.build; if (!w || !b || b.busy) return;
+  b.src = $('#buildSrc').value; b.mind = $('#buildMind').checked; b.kb = $('#buildKb').checked; b.st = $('#buildSt').checked; b.target = Math.min(L.MAIN, Math.max(500, +$('#buildTarget').value || 5000)); b.extra = $('#buildExtra').value;
+  const notes = w.notes.filter(n => n.text.trim() && b.notes[n.id] !== false), mind = b.mind ? outline(w).trim() : '';
+  if (!notes.length && !mind) { toast('재료가 없습니다. 아이디어 노트를 고르거나 마인드맵을 켜 주세요'); return; }
+  const src = buildSources().find(x => x.key === b.src);
+  let skel = '(뼈대 없음 — 크랙 롤플레이 프롬프트의 일반적인 구성으로 짓는다)';
+  if (src) {
+    const v = src.v; skel = v.sections.filter(x => x.on).map((x, i) => `<<<뼈대 섹션 ${i + 1} | ${secLabel(x)} | ${x.text.length}자>>>\n${x.text}`).join('\n') + '\n<<<뼈대 끝>>>';
+    if (b.kb && v.kb.length) skel += `\n\n[뼈대의 로어북 서식 예 — 서식만 참고하고 내용은 가져오지 말 것]\n` + v.kb.slice(0, 2).map(k => `이름: ${k.name} | 트리거: ${k.triggers.join(', ')}\n${k.text}`).join('\n---\n');
+    if (b.st && v.starts.length) skel += `\n\n[뼈대의 시작상황 서식 예 — HUD·이미지 주소 같은 형식만 참고]\n${v.starts[0].text.slice(0, 700)}\n[서브 컨텍스트]\n${v.starts[0].sub.slice(0, 400)}`;
+    if (v.subs.some(subOk)) skel += `\n\n[뼈대가 쓰는 치환 기호(원래 표현=기호) — 새 프롬프트에서도 같은 기호를 쓴다]\n` + v.subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ');
+  }
+  const req = `[새 작품] ${w.title}\n[소개] ${w.desc || '-'}\n\n[재료 — 아이디어 노트]\n${notes.map(n => '- ' + n.text.trim()).join('\n') || '(없음)'}\n\n[재료 — 마인드맵]\n${mind || '(없음)'}\n\n[뼈대]\n${skel}\n\n[요청]\n- 메인 프롬프트(켠 섹션 합계) 목표 약 ${b.target}자, 절대 ${L.MAIN}자 초과 금지.\n- 로어북: ${b.kb ? `필요한 만큼(최대 ${L.KBN}슬롯), 슬롯당 ${L.KBC}자 이하.` : '만들지 않는다(빈 배열).'}\n- 시작상황: ${b.st ? `1~${L.STN}개, 첫 장면 ${L.STC}자·서브 컨텍스트 ${L.SUB}자 이하.` : '만들지 않는다(빈 배열).'}${b.extra.trim() ? '\n- 추가 요청: ' + b.extra.trim() : ''}`;
+  b.busy = true; b.err = ''; b.res = null; openBuild();
+  try { const r = await gemini({ system: SYS_BUILD, json: true, temp: 0.7, kind: '프롬프트 구성', contents: [{ role: 'user', parts: [{ text: req }] }] }); b.res = Object.assign(buildParse(r.text), { usage: r.usage, srcKey: b.src, wantKb: b.kb, wantSt: b.st }); }
+  catch (e) { b.err = e.message; }
+  b.busy = false; const here = $('#buildSrc') || $('#buildOut');
+  if (here && ui.build === b && W() && W().id === b.wid) { if (b.res) showBuild(); else openBuild(); }
+  else toast(b.res ? '프롬프트 구성이 끝났습니다 — 아이디어 탭의 "아이디어로 프롬프트 구성"에서 결과를 보세요' : '프롬프트 구성 실패: ' + b.err, 6000);
+}
+function showBuild() {
+  const b = ui.build, r = b.res, main = r.sections.map(x => x.text).join('\n'), cls = (n, m) => n > m ? 'bad-t' : '';
+  modal(`<h3>구성 결과 — 확인 후 새 버전으로 추가</h3>
+   <div class="tiles"><div class="tile"><b class="num ${cls(main.length, L.MAIN)}">${nf(main.length)}</b><span>메인 / ${nf(L.MAIN)}자 · 섹션 ${r.sections.length}개</span></div><div class="tile"><b class="num">${r.kb.length}</b><span>로어북 슬롯${r.wantKb ? '' : ' (안 만듦)'}</span></div><div class="tile"><b class="num">${r.starts.length}</b><span>시작상황${r.wantSt ? '' : ' (안 만듦)'}</span></div></div>
+   ${main.length > L.MAIN ? `<div class="note warn">메인 프롬프트가 한도를 ${nf(main.length - L.MAIN)}자 넘습니다. 추가한 뒤 압축(극단)이나 직접 편집으로 줄여 주세요.</div>` : ''}
+   ${r.notes ? `<div class="note"><b>AI가 보충·판단한 점</b><br>${esc(r.notes).replace(/\n/g, '<br>')}</div>` : ''}
+   <div id="buildOut" class="blist">
+   ${r.sections.map((x, i) => `<details ${i < 2 ? 'open' : ''}><summary>${esc(x.label || (x.text.match(/^#+\s*(.+)/m) || [, '섹션 ' + (i + 1)])[1])} <span class="hint num">${nf(x.text.length)}자</span></summary><pre class="code">${esc(x.text)}</pre></details>`).join('')}
+   ${r.kb.map(k => `<details><summary>로어북 · ${esc(k.name || '이름 없음')} <span class="hint num ${cls(k.text.length, L.KBC)}">${k.text.length}/${L.KBC}자</span></summary><div class="hint">트리거: ${esc(k.triggers.join(', ') || '없음')}</div><pre class="code">${esc(k.text)}</pre></details>`).join('')}
+   ${r.starts.map(t => `<details><summary>시작상황 · ${esc(t.name || '')} <span class="hint num ${cls(t.text.length, L.STC)}">${t.text.length}/${L.STC}자</span></summary><pre class="code">${esc(t.text)}</pre><div class="hint">서브 컨텍스트 ${t.sub.length}/${L.SUB}자</div><pre class="code">${esc(t.sub)}</pre></details>`).join('')}
+   </div>
+   <div class="usage">${costStr(r.usage)}</div>
+   <span class="hint">로어북·시작상황을 만들지 않았으면 지금 버전의 것을 그대로 가져갑니다. 치환 규칙·의도 메모도 이어받습니다.</span>
+   <div class="foot"><button class="btn" data-act="buildBack">← 다시 구성</button><button class="btn" data-act="close">닫기</button><button class="btn accent" data-act="buildApply">새 버전으로 추가</button></div>`, true);
+}
+function applyBuild() {
+  const w = W(), b = ui.build; if (!w || !b || !b.res) return; const r = b.res, cur = V();
+  const name = '아이디어 구성 ' + (w.versions.filter(v => /^아이디어 구성/.test(v.name)).length + 1), nv = cloneVer(cur, name);
+  nv.sections = r.sections.map(x => ({ id: uid(), label: x.label && !new RegExp('^#+\\s*' + reEsc(x.label) + '\\s*$', 'm').test(x.text) ? x.label : '', text: x.text, on: true, memo: '', fold: false }));
+  if (r.wantKb && r.kb.length) nv.kb = r.kb.map(k => ({ id: uid(), name: k.name, triggers: k.triggers, text: k.text, on: true, memo: '' }));
+  if (r.wantSt && r.starts.length) nv.starts = r.starts.map(t => ({ id: uid(), name: t.name, text: t.text, sub: t.sub, memo: '' }));
+  const src = buildSources().find(x => x.key === r.srcKey); if (src && !nv.subs.some(subOk) && src.v.subs.some(subOk)) nv.subs = JSON.parse(JSON.stringify(src.v.subs)).map(x => Object.assign(x, { id: uid() }));
+  nv.rules = { auto: cur.rules ? cur.rules.auto : true, by: {} }; nv.memo = '아이디어 노트·마인드맵으로 구성' + (src ? ` (뼈대: ${src.w.title} · ${src.v.name})` : '');
+  w.versions.push(nv); w.curVer = nv.id; ui.build = null; ui.tab = 'prompt'; ui.undo = []; $('#undoBtn').hidden = true;
+  save(); closeModal(); render(); toast(`새 버전 "${name}"을 만들어 열었습니다. 이전 버전은 그대로 있습니다`, 5000);
 }
 
 function md(text) { // 코드블록만 따로 꾸미는 최소 렌더
@@ -685,13 +879,19 @@ function renderAI() {
       ${aiUI.busy ? '<div class="msg model"><span class="spin"></span> 생각하는 중…</div>' : ''}`;
     foot = `<textarea rows="3" id="aiIn" placeholder="물어볼 내용 (Ctrl+Enter로 보내기)" style="font-family:var(--font)">${esc(aiUI.draft)}</textarea><div class="row"><button class="btn sm" data-act="aiClear">대화 비우기</button><span class="grow"></span><button class="btn accent" data-act="aiSend" ${aiUI.busy ? 'disabled' : ''}>보내기</button></div>`;
   } else if (aiUI.tab === 'cmp') {
-    const ts = cmpTargets(), c = aiUI.cmp; if (!ts.some(t => t.key === aiUI.cmpTarget)) aiUI.cmpTarget = ts[0] ? ts[0].key : '';
+    const ts = cmpTargets(), c = aiUI.cmp, groups = CMP_ALL.filter(([k]) => cmpGroup(k).length);
+    if (!ts.some(t => t.key === aiUI.cmpTarget) && !groups.some(([k]) => k === aiUI.cmpTarget)) aiUI.cmpTarget = ts[0] ? ts[0].key : '';
+    const lvHint = { 약: '조사·중복만 정리', 중: '한자·기호로 적극 치환', 강: '표현을 최대한 압축', 극단: '구조까지 줄여 30% 이상 목표 · 30% 미만이면 최대 두 번 더 압축(요금도 그만큼)' }[aiUI.cmpLevel];
     body = `<div class="cmp"><span class="hint">글자수가 실제로 줄어드는 곳에만 중국어 간체와 기호를 써서 줄입니다. 결과를 확인한 뒤 적용하세요.</span>
-      <label class="f">압축할 항목<select id="cmpTarget">${ts.map(t => `<option value="${t.key}" ${t.key === aiUI.cmpTarget ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>
-      <div class="row"><span class="hint">강도</span>${['약', '중', '강'].map(l => `<label class="sw"><input type="radio" name="cmpLv" data-in="cmp.lv" value="${l}" ${aiUI.cmpLevel === l ? 'checked' : ''}>${l}</label>`).join('')}<span class="grow"></span><button class="btn accent" data-act="cmpRun" ${aiUI.busy || !ts.length ? 'disabled' : ''}>압축하기</button></div>
-      ${aiUI.busy ? '<div class="msg model"><span class="spin"></span> 압축하는 중…</div>' : ''}
+      <label class="f">압축할 항목<select id="cmpTarget">${groups.length ? `<optgroup label="한 번에 압축">${groups.map(([k, t]) => `<option value="${k}" ${k === aiUI.cmpTarget ? 'selected' : ''}>${t} · ${cmpGroup(k).length}개</option>`).join('')}</optgroup><optgroup label="항목 하나">` : ''}${ts.map(t => `<option value="${t.key}" ${t.key === aiUI.cmpTarget ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}${groups.length ? '</optgroup>' : ''}</select></label>
+      <div class="row"><span class="hint">강도</span>${['약', '중', '강', '극단'].map(l => `<label class="sw"><input type="radio" name="cmpLv" data-in="cmp.lv" value="${l}" ${aiUI.cmpLevel === l ? 'checked' : ''}>${l}</label>`).join('')}<span class="grow"></span><button class="btn accent" data-act="cmpRun" ${aiUI.busy || !ts.length ? 'disabled' : ''}>압축하기</button></div>
+      <span class="hint" id="cmpLvHint">${lvHint}</span>
+      ${aiUI.busy && !aiUI.batch ? `<div class="msg model"><span class="spin"></span> 압축하는 중…${aiUI.pass > 1 ? ` (${aiUI.pass}차 — 30%에 못 미쳐 한 번 더 줄이는 중)` : ''}</div>` : ''}
+      ${aiUI.batch ? batchHTML(aiUI.batch) : ''}
       ${c && c.err ? `<div class="msg err">${esc(c.err)}</div>` : ''}
-      ${c && !c.err ? `<div class="note ${c.after.length < c.before.length ? '' : 'warn'}"><b class="num">${nf(c.before.length)}자 → ${nf(c.after.length)}자</b> ${c.after.length < c.before.length ? `(${nf(c.before.length - c.after.length)}자, ${Math.round((1 - c.after.length / c.before.length) * 100)}% 절약)` : '— 줄어들지 않았습니다. 적용하지 않는 편이 좋습니다.'}</div>
+      ${c && !c.err ? `<div class="note ${c.after.length < c.before.length ? '' : 'warn'}"><b class="num">${nf(c.before.length)}자 → ${nf(c.after.length)}자</b> ${c.after.length < c.before.length ? `(${nf(c.before.length - c.after.length)}자, ${pct(c.before.length, c.after.length)}% 절약)` : '— 줄어들지 않았습니다. 적용하지 않는 편이 좋습니다.'}${c.passes > 1 ? ` · ${c.passes}차례 압축` : ''}</div>
+        ${c.level === '극단' && pct(c.before.length, c.after.length) < 30 && c.after.length < c.before.length ? `<div class="note warn">30%에 못 미쳤습니다.${c.limit ? ' 이유: ' + esc(c.limit) : ' 원문에 더 줄일 중복·부연이 적은 것으로 보입니다.'}</div>` : ''}
+        ${c.warn && c.warn.length ? `<div class="note warn">확인 필요 — ${esc(c.warn.join(' · '))}</div>` : ''}
         <span class="hint">압축 결과 (적용 전에 직접 고칠 수 있습니다)</span><textarea rows="12" id="cmpOut" spellcheck="false">${esc(c.after)}</textarea>
         ${c.notes ? `<div class="note">${esc(c.notes)}</div>` : ''}
         <details><summary class="hint">원문 보기</summary><pre class="code">${esc(c.before)}</pre></details>
@@ -700,10 +900,11 @@ function renderAI() {
   } else {
     body = `<div class="tiles"><div class="tile"><b class="num">${nf(u.calls)}</b><span>요청 횟수</span></div><div class="tile"><b class="num">${nf(u.inTok + u.outTok)}</b><span>누적 토큰</span></div><div class="tile"><b class="num">$${u.usd.toFixed(3)}</b><span>≈ ${nf(Math.round(u.usd * S.settings.krw))}원</span></div></div>
       <span class="hint">금액은 설정에 입력된 단가로 계산한 추정치입니다. 현재 모델 ${esc(S.settings.model)} · 입력 $${S.settings.priceIn} / 출력 $${S.settings.priceOut}</span>
-      <table class="log"><tr><th>시각</th><th>종류</th><th>입력</th><th>출력</th><th>금액</th></tr>${u.log.map(x => `<tr><td>${fmtDate(x.t).slice(5)}</td><td>${esc(x.kind || '')}</td><td>${nf(x.inTok)}</td><td>${nf(x.outTok)}</td><td>$${x.usd.toFixed(4)}</td></tr>`).join('')}</table>
+      <table class="log"><tr><th>시각</th><th>종류</th><th>추론</th><th>입력</th><th>출력</th><th>금액</th></tr>${u.log.map(x => `<tr><td>${fmtDate(x.t).slice(5)}</td><td>${esc(x.kind || '')}</td><td>${esc(x.lv && x.lv !== 'auto' ? thinkName(x.lv.split('(')[0]) : '기본')}</td><td>${nf(x.inTok)}</td><td>${nf(x.outTok)}</td><td>$${x.usd.toFixed(4)}</td></tr>`).join('')}</table>
       <div class="row"><button class="btn sm" data-act="useReset">사용량 기록 지우기</button></div>`;
   }
-  el.innerHTML = `<div class="ai-h">${tabs}<span class="grow"></span><span class="cnt" title="누적 사용 금액">$${u.usd.toFixed(3)}</span><button class="icon" data-act="ai" aria-label="AI 닫기">✕</button></div><div class="ai-b" id="aiBody">${body}</div>${foot ? `<div class="ai-f">${foot}</div>` : ''}`;
+  const thinkSel = `<select id="aiThink" class="mini" title="추론 단계 — 높을수록 꼼꼼하지만 느리고 비쌉니다" aria-label="추론 단계">${THINK.map(([k, t]) => `<option value="${k}" ${S.settings.think === k ? 'selected' : ''}>추론: ${t.split(' ')[0]}</option>`).join('')}</select>`;
+  el.innerHTML = `<div class="ai-h">${tabs}<span class="grow"></span>${thinkSel}<span class="cnt" title="누적 사용 금액">$${u.usd.toFixed(3)}</span><button class="icon" data-act="ai" aria-label="AI 닫기">✕</button></div><div class="ai-b" id="aiBody">${body}</div>${foot ? `<div class="ai-f">${foot}</div>` : ''}`;
   const b = $('#aiBody'), nMsg = $$('.msg', b).length;
   if (opening) { el.classList.remove('in'); void el.offsetWidth; el.classList.add('in'); regrow(); }
   else if (tabChanged && motionOn()) b.classList.add('fade-in');
@@ -980,7 +1181,7 @@ const A = {
       const sel = $('#setModel'), cur = sel.value; sel.innerHTML = [...new Set([...ids, cur])].map(i => `<option ${i === cur ? 'selected' : ''}>${esc(i)}</option>`).join(''); toast(`사용할 수 있는 모델 ${ids.length}개를 불러왔습니다`);
     } catch (e) { toast('모델 목록을 불러오지 못했습니다: ' + e.message, 5000); }
   },
-  setSave() { const s = S.settings; s.apiKey = $('#setKey').value.trim(); s.model = ($('#setModelCustom').value.trim() || $('#setModel').value).replace(/^models\//, ''); s.priceIn = +$('#setIn').value || 0; s.priceOut = +$('#setOut').value || 0; s.krw = +$('#setKrw').value || 1400; s.temp = Math.min(2, Math.max(0, +$('#setTemp').value || 0)); s.theme = $('#setTheme').value; s.motion = $('#setMotion').value; s.autoUpdate = $('#setAuto').checked; save(); closeModal(); render(); toast('설정을 저장했습니다'); },
+  setSave() { const s = S.settings; s.apiKey = $('#setKey').value.trim(); s.model = ($('#setModelCustom').value.trim() || $('#setModel').value).replace(/^models\//, ''); s.priceIn = +$('#setIn').value || 0; s.priceOut = +$('#setOut').value || 0; s.krw = +$('#setKrw').value || 1400; s.temp = Math.min(2, Math.max(0, +$('#setTemp').value || 0)); s.think = $('#setThink').value; s.theme = $('#setTheme').value; s.motion = $('#setMotion').value; s.autoUpdate = $('#setAuto').checked; save(); closeModal(); render(); toast('설정을 저장했습니다'); },
 
   aiTab(el) { aiUI.tab = el.dataset.id; renderAI(); },
   quick(el) { const q = QUICK[+el.dataset.id]; if (q[1] === 'fill') { aiUI.draft = q[2]; renderAI(); const t = $('#aiIn'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } else aiSend(q[2], q[1]); },
@@ -988,9 +1189,20 @@ const A = {
   aiClear() { const w = W(); if (!confirm('이 작품의 AI 대화를 모두 지울까요?')) return; if (w) w.chat = []; else aiUI.loose = []; save(); renderAI(); },
   msgCopy(el) { const w = W(); copy((w ? w.chat : aiUI.loose)[+el.dataset.id].text); },
   msgNote(el) { const w = W(); w.notes.unshift({ id: uid(), text: w.chat[+el.dataset.id].text, c: 3 }); save(); toast('아이디어 노트에 저장했습니다'); if (ui.tab === 'ideas') render(); },
-  cmpRun() { aiUI.cmpTarget = $('#cmpTarget').value; runCompress(); },
+  cmpRun() { aiUI.cmpTarget = $('#cmpTarget').value; aiUI.cmp = null; runCompress(); },
   cmpApply() { const c = aiUI.cmp, t = cmpTargets().find(x => x.key === c.key); if (!t) { toast('대상 항목이 없어졌습니다'); return; } snap('압축 적용'); t.set($('#cmpOut').value); aiUI.cmp = null; save(); render(); toast('압축 결과로 바꿨습니다. 마음에 안 들면 위의 "되돌리기"를 누르세요', 4000); },
-  cmpDrop() { aiUI.cmp = null; renderAI(); },
+  cmpDrop() { aiUI.cmp = null; aiUI.batch = null; renderAI(); },
+  cmpStop() { if (aiUI.batch) { aiUI.batch.stop = true; toast('지금 처리 중인 항목까지만 끝내고 멈춥니다'); } },
+  cmpBatchApply() {
+    const b = aiUI.batch; if (!b) return; const sel = b.items.filter(i => i.st === 'ok' && i.pick), ts = cmpTargets(); let n = 0, miss = 0;
+    if (!sel.length) return; snap(`전체 압축 적용 (${sel.length}개)`);
+    sel.forEach(it => { const t = ts.find(x => x.key === it.key); if (!t) { miss++; return; } if (t.get() !== it.before) { miss++; return; } t.set(it.after); n++; }); // 압축하는 사이 직접 고친 항목은 덮어쓰지 않는다
+    aiUI.batch = null; save(); render(); renderAI(); toast(`${n}개 항목을 바꿨습니다${miss ? ` · ${miss}개는 그사이 내용이 바뀌어 건너뜀` : ''}. 마음에 안 들면 "되돌리기"를 누르세요`, 5000);
+  },
+  buildOpen() { openBuild(); },
+  buildRun() { runBuild(); },
+  buildApply() { applyBuild(); },
+  buildBack() { ui.build.res = null; openBuild(); },
   useReset() { if (!confirm('사용량 기록을 지울까요?')) return; S.usage = { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] }; save(); renderAI(); },
   hit(el) { const h = ui.hits[+el.dataset.id]; jump(h.go, h.i, h.len); },
   replAll() {
@@ -1044,6 +1256,7 @@ document.addEventListener('input', e => {
   if (t.id === 'searchIn') { drawSearch(); return; }
   if (t.id === 'aiIn') { aiUI.draft = t.value; return; }
   if (!k) return; const id = t.dataset.id;
+  if (k === 'cmp.bout') { const it = aiUI.batch && aiUI.batch.items[+id]; if (it) { it.after = t.value; const c = $(`[data-bc="${id}"]`); if (c) c.textContent = `${nf(it.before.length)}→${nf(it.after.length)} (${pct(it.before.length, it.after.length)}%)`; } return; }
   if (k === 'sec.text') { const s = find(v.sections, id); s.text = t.value; $$(`[data-cnt="${id}"]`).forEach(x => x.textContent = nf(s.text.length)); $$(`[data-cnt2="${id}"]`).forEach(x => x.textContent = nf(s.text.length) + '자'); if (!s.label) { const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); } const sig = subSig(s); if (t._sig === undefined) t._sig = sig; if (t._sig !== sig || /^## /m.test(s.text)) { t._sig = sig; $('#navlist').innerHTML = navHTML(v); } refreshMain(); }
   else if (k === 'sec.label') { const s = find(v.sections, id); s.label = t.value; const l = $(`.navitem[data-id="${id}"] .lbl`); if (l) l.textContent = secLabel(s); }
   else if (k === 'sec.memo' || k === 'kb.memo' || k === 'st.memo') { const kind = k.slice(0, -5); find(v[MEMO_ARR[kind]], id).memo = t.value; const b = $(`.memob[data-id="${id}"]`); if (b) b.classList.toggle('has', !!t.value.trim()); }
@@ -1065,7 +1278,8 @@ document.addEventListener('change', e => {
   if (t.id === 'verSel') { W().curVer = t.value; ui.undo = []; $('#undoBtn').hidden = true; save(); render(); }
   else if (t.id === 'diffA' || t.id === 'diffB') openDiff($('#diffA').value, $('#diffB').value);
   else if (t.id === 'joinBlank') { v.joinBlank = t.checked; save(); refreshMain(); }
-  else if (t.id === 'cmpTarget') { aiUI.cmpTarget = t.value; aiUI.cmp = null; renderAI(); }
+  else if (t.id === 'cmpTarget') { aiUI.cmpTarget = t.value; aiUI.cmp = null; if (!aiUI.busy) aiUI.batch = null; renderAI(); }
+  else if (t.id === 'aiThink') { S.settings.think = t.value; save(); toast('추론 단계: ' + thinkName(t.value)); }
   else if (t.id === 'setModel') { const p = priceOf(t.value); if (p) { $('#setIn').value = p.in; $('#setOut').value = p.out; } }
   else if (k === 'sec.on') { find(v.sections, t.dataset.id).on = t.checked; save(); render(); }
   else if (k === 'kb.on') { find(v.kb, t.dataset.id).on = t.checked; save(); render(); }
@@ -1074,7 +1288,9 @@ document.addEventListener('change', e => {
   else if (k === 'sub.bulk') { find(v.subs, t.dataset.id).bulk = t.checked; save(); render(); }
   else if (k === 'sub.scope') { ui.subScope[t.dataset.id] = t.checked; render(); }
   else if (k === 'sub.long' || k === 'sub.short') softRender();
-  else if (k === 'cmp.lv') aiUI.cmpLevel = t.value;
+  else if (k === 'cmp.lv') { aiUI.cmpLevel = t.value; renderAI(); }
+  else if (k === 'cmp.pick') { const it = aiUI.batch && aiUI.batch.items[+t.dataset.id]; if (it) { it.pick = t.checked; renderAI(); } }
+  else if (k === 'build.note') { ui.build.notes[t.dataset.id] = t.checked; }
   else if (t.id === 'filePick' && t.files[0]) { const r = new FileReader(); r.onload = () => importText(String(r.result)); r.readAsText(t.files[0]); }
   else if (t.id === 'imgPick' && t.files[0]) {
     const r = new FileReader(); r.onload = () => { const im = new Image(); im.onload = () => { const s = Math.min(1, 640 / im.width), c = document.createElement('canvas'); c.width = Math.round(im.width * s); c.height = Math.round(im.height * s); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); W().thumb = c.toDataURL('image/jpeg', 0.82); save(); render(); }; im.onerror = () => toast('이미지를 읽지 못했습니다'); im.src = r.result; }; r.readAsDataURL(t.files[0]);

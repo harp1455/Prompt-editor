@@ -398,3 +398,20 @@ label.f{grid-template-columns:minmax(0,1fr)}
 .dlg details{border:1px solid var(--line);border-radius:8px;padding:6px 10px}
 .dlg details summary{cursor:pointer;font-size:13.5px}
 .dlg details .diff{margin-top:6px}
+
+/* ───────── 전체 압축 · 아이디어 구성 ───────── */
+.bad-t{color:var(--bad)!important}
+select.mini{width:auto;padding:3px 6px;font-size:12px;border-radius:6px;max-width:42vw}
+.prog{height:4px;border-radius:4px;background:var(--line);overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent);transition:width .3s var(--ease)}
+.blist{display:grid;gap:6px}
+.bitem{border:1px solid var(--line);border-radius:8px;padding:6px 10px;display:grid;gap:6px;background:var(--surface)}
+.bitem.run{border-color:var(--accent)}
+.bitem.err,.bitem.skip{opacity:.75}
+.bitem .row{flex-wrap:nowrap}
+.bitem b{font-size:13.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bitem .num{font-size:12.5px;white-space:nowrap}
+.bitem textarea{font:13px/1.55 var(--mono);width:100%}
+.bpick{align-items:flex-start;padding:4px 0}
+.bpick span{min-width:0;font-size:13.5px;line-height:1.45}
+.dlg .blist details>pre.code{max-height:40vh;overflow:auto}
