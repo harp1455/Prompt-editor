@@ -415,3 +415,43 @@ select.mini{width:auto;padding:3px 6px;font-size:12px;border-radius:6px;max-widt
 .bpick{align-items:flex-start;padding:4px 0}
 .bpick span{min-width:0;font-size:13.5px;line-height:1.45}
 .dlg .blist details>pre.code{max-height:40vh;overflow:auto}
+
+/* ───────── 화면 키보드(휴대폰) ─────────
+   --kb 는 키보드가 화면을 가린 높이(app.js kbSync 가 넣는다). 그만큼 아래를 비워 치는 줄·AI 입력칸·모달 버튼이 가려지지 않게 한다. */
+:root{--kb:0px}
+body{padding-bottom:var(--kb)}
+.ai{bottom:var(--kb)}
+.ov{padding-bottom:calc(6vh + var(--kb))}
+.toast{bottom:calc(22px + var(--kb))}
+html.kb-on .mm-view{height:calc(100vh - 210px - var(--kb));min-height:200px}
+
+/* ───────── 작품 목록: 순서·보기 방식·상단 고정 ───────── */
+.libbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.libbar select{width:auto;max-width:100%;padding:5px 8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:none;padding:5px 13px;cursor:pointer;color:var(--muted);transition:background-color var(--d1),color var(--d1)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.work{position:relative}
+.pinb{border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:12px;padding:2px 9px;font-size:12px;cursor:pointer;white-space:nowrap;transition:background-color var(--d1),color var(--d1),border-color var(--d1)}
+.pinb:hover{border-color:var(--accent);color:var(--ink)}
+.pinb.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.work:not(.row)>.pinb{position:absolute;top:8px;right:8px;box-shadow:var(--e1)}
+.work:not(.row)>.grip{position:absolute;top:8px;left:8px;background:var(--surface);border-radius:8px;padding:3px 8px;box-shadow:var(--e1)}
+.work.pinned{box-shadow:0 0 0 1.5px var(--accent),var(--e1)}
+.lib.list{grid-template-columns:minmax(0,1fr);gap:8px}
+.work.row{flex-direction:row;align-items:center;gap:10px;padding:8px 10px;min-height:0;text-align:left;width:100%}
+.work.row .thumb{flex:none;width:46px;height:46px;aspect-ratio:auto;border-radius:9px;font-size:15px}
+.work.row .body{flex:1;min-width:0;padding:0;gap:1px;cursor:pointer}
+.work.row h3{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.work.row .grip{flex:none;padding:10px 6px}
+.work.row .more{flex:none;font-size:18px;line-height:1;padding:8px 9px}
+.work.row.new{border:1.5px dashed var(--line);display:flex;justify-content:center;gap:10px;padding:13px 10px;flex-wrap:wrap}
+@media (hover:hover){.work.row:not(.new):hover{transform:none}}
+.menu{display:grid;gap:8px}
+.menu .btn{padding:10px 12px;text-align:left}
+
+/* ───────── 아이디어 노트 순서 바꾸기 ───────── */
+.sticky .acts{flex-wrap:wrap;align-items:center}
+.sticky .acts .grip{padding:6px 8px}
+.icon:disabled{opacity:.35;cursor:default}

@@ -82,7 +82,50 @@ async function copy(text, okMsg = '복사했습니다') {
   try { document.execCommand('copy'); toast(okMsg); } catch (e) { toast('복사 실패 — 직접 선택해서 복사해 주세요'); }
   ta.remove();
 }
-function grow(t) { t.style.height = 'auto'; t.style.height = (t.scrollHeight + 2) + 'px'; }
+// 입력칸 높이를 내용에 맞춘다. 높이를 재려고 잠깐 줄이는 순간 페이지 길이가 짧아져 스크롤이 위로 튀는 일이 있어(긴 글 끝에서 치던 줄이 화면 밖으로 사라짐), 스크롤 위치를 기억했다가 되돌린다.
+function grow(t) {
+  const sc = t.closest('.ov,.ai-b'), y = window.scrollY, sy = sc ? sc.scrollTop : 0;
+  t.style.height = 'auto'; t.style.height = (t.scrollHeight + 2) + 'px';
+  if (window.scrollY !== y) window.scrollTo(window.scrollX, y); if (sc && sc.scrollTop !== sy) sc.scrollTop = sy;
+}
+// ───────── 화면 키보드(휴대폰) ─────────
+// 안드로이드 15 이후에는 키보드가 올라와도 웹 화면 크기가 줄지 않아, 치고 있는 줄이 키보드 뒤에 가려진다.
+// 그래서 키보드가 가린 높이를 직접 구해 CSS 변수 --kb 에 넣고(페이지 아래 여백, AI 창·모달·알림 위치가 이 값을 쓴다), 커서가 있는 줄이 항상 보이게 스크롤한다.
+// 높이는 두 군데서 얻는다: ① 안드로이드 앱 — Capacitor Keyboard 플러그인이 보내는 keyboardWillShow/DidShow 이벤트 ② 그 밖 — visualViewport.
+const KB = { h: 0, nat: 0, baseH: window.innerHeight, baseW: window.innerWidth };
+const editing = () => { const a = document.activeElement; return !!a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(checkbox|radio|file|button|range)$/.test(a.type))); };
+function kbSync() {
+  const vv = window.visualViewport, ih = window.innerHeight;
+  // 키보드가 없을 때의 화면 높이를 기억해 둔다. 웹 화면이 스스로 줄어든 만큼은 가린 높이에서 뺀다(두 번 세지 않게).
+  if (window.innerWidth !== KB.baseW || ih > KB.baseH || (!KB.nat && !editing())) { KB.baseW = window.innerWidth; KB.baseH = ih; }
+  const nat = Math.max(0, KB.nat - Math.max(0, KB.baseH - ih)), vis = vv && Math.abs((vv.scale || 1) - 1) < 0.01 ? Math.max(0, ih - vv.height - vv.offsetTop) : 0;
+  let h = Math.round(Math.max(nat, vis)); if (h < 60) h = 0;
+  if (h !== KB.h) { KB.h = h; document.documentElement.style.setProperty('--kb', h + 'px'); document.documentElement.classList.toggle('kb-on', h > 0); }
+  caretSoon();
+}
+// 커서가 있는 줄의 화면 위치. 입력칸이 내용만큼 길어지는 구조라, 숨은 복사본에 커서 앞까지의 글을 넣어 높이를 잰다.
+function caretRect(t) {
+  const r = t.getBoundingClientRect(); if (t.tagName !== 'TEXTAREA') return { top: r.top, bottom: r.bottom };
+  let m = caretRect.m; if (!m) { m = caretRect.m = document.createElement('div'); m.setAttribute('aria-hidden', 'true'); m.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;top:0;left:-9999px;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden'; }
+  const cs = getComputedStyle(t); for (const k of ['boxSizing', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'tabSize', 'textIndent', 'wordBreak', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth']) m.style[k] = cs[k];
+  m.style.borderStyle = 'solid'; m.style.width = t.offsetWidth + 'px'; let pos = t.value.length; try { pos = t.selectionEnd; } catch (e) { /* 무시 */ }
+  m.textContent = t.value.slice(0, pos); const sp = document.createElement('span'); sp.textContent = '\u200b'; m.appendChild(sp); document.body.appendChild(m);
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.6, y = sp.offsetTop - t.scrollTop; m.remove();
+  const top = Math.min(Math.max(r.top + y, r.top), r.bottom - lh); return { top, bottom: top + lh };
+}
+function keepCaret() {
+  const t = document.activeElement; if (!KB.h || !editing() || t.closest('.ai-f')) return; // AI 입력칸은 창째로 키보드 위에 올라온다
+  const sc = t.closest('.ov,.ai-b'), c = caretRect(t), bars = $('#tabs'), top = sc ? 12 : (bars && !bars.hidden ? bars.getBoundingClientRect().bottom : $('.top').getBoundingClientRect().bottom) + 8, bottom = window.innerHeight - KB.h - 14;
+  const d = c.bottom > bottom ? c.bottom - bottom : c.top < top ? Math.max(c.top - top, c.bottom - bottom) : 0; if (Math.abs(d) < 2) return;
+  if (sc) sc.scrollTop += d; else window.scrollBy(0, d);
+}
+function caretSoon() { cancelAnimationFrame(caretSoon.r); caretSoon.r = requestAnimationFrame(keepCaret); }
+['keyboardWillShow', 'keyboardDidShow'].forEach(n => window.addEventListener(n, e => { KB.nat = +(e && e.keyboardHeight) || 0; kbSync(); setTimeout(kbSync, 250); }));
+['keyboardWillHide', 'keyboardDidHide'].forEach(n => window.addEventListener(n, () => { KB.nat = 0; kbSync(); }));
+if (window.visualViewport) { visualViewport.addEventListener('resize', kbSync); visualViewport.addEventListener('scroll', kbSync); }
+document.addEventListener('focusin', () => { caretSoon(); setTimeout(kbSync, 350); });
+document.addEventListener('focusout', () => setTimeout(kbSync, 350));
+document.addEventListener('keyup', caretSoon);
 const cntCls = (n, max) => n > max ? 'over' : n > max * 0.9 ? 'warn' : '';
 function meter(id, n, max, label = '') {
   const c = cntCls(n, max);
@@ -106,7 +149,7 @@ const aiUI = { open: false, tab: 'chat', busy: false, ctx: { main: true, kb: tru
 function newVersion(name = '버전 1') { return { id: uid(), name, memo: '', created: now(), updated: now(), joinBlank: false, intent: '', sections: [], kb: [], starts: [], subs: [], rules: { auto: true, by: {} } }; }
 function newWork(title = '새 작품') {
   const v = newVersion(); v.sections.push({ id: uid(), label: '', text: '# 역할\n', on: true });
-  return { id: uid(), title, desc: '', thumb: '', created: now(), updated: now(), curVer: v.id, versions: [v], notes: [], mind: null, chat: [] };
+  return { id: uid(), title, desc: '', thumb: '', pin: false, created: now(), updated: now(), curVer: v.id, versions: [v], notes: [], mind: null, chat: [] };
 }
 function sampleWork() {
   const w = newWork('예시 작품 (지워도 됩니다)'); w.desc = '사용법을 보여 주는 예시입니다. 왼쪽 목록에서 섹션을 고르고, 미리보기 탭에서 전체를 복사해 크랙에 붙여 넣으세요.';
@@ -120,14 +163,14 @@ function sampleWork() {
   v.starts = [{ id: uid(), name: '첫 만남', text: '', sub: '' }];
   return w;
 }
-function fresh() { return { format: 1, works: [sampleWork()], workId: null, settings: { apiKey: '', model: MODELS[0].id, priceIn: MODELS[0].in, priceOut: MODELS[0].out, krw: 1400, temp: 1, think: 'auto', theme: 'auto', motion: 'auto', models: [] }, usage: { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] } }; }
+function fresh() { return { format: 1, works: [sampleWork()], workId: null, settings: { apiKey: '', model: MODELS[0].id, priceIn: MODELS[0].in, priceOut: MODELS[0].out, krw: 1400, temp: 1, think: 'auto', theme: 'auto', motion: 'auto', models: [], libSort: 'manual', libView: 'card' }, usage: { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] } }; }
 function normalize(s) {
   const f = fresh();
   s.settings = Object.assign(f.settings, s.settings || {}); s.usage = Object.assign(f.usage, s.usage || {});
   s.works = (s.works || []).map(normWork); return s;
 }
 function normWork(w) {
-  w.id = w.id || uid(); w.title = w.title || '제목 없음'; w.notes = w.notes || []; w.chat = w.chat || []; w.versions = (w.versions || []).map(normVer);
+  w.id = w.id || uid(); w.title = w.title || '제목 없음'; w.notes = w.notes || []; w.chat = w.chat || []; w.updated = w.updated || now(); w.created = w.created || w.updated; w.pin = !!w.pin; w.versions = (w.versions || []).map(normVer);
   if (!w.versions.length) w.versions.push(newVersion());
   if (!w.versions.some(v => v.id === w.curVer)) w.curVer = w.versions[w.versions.length - 1].id;
   return w;
@@ -190,6 +233,8 @@ function render() {
   $$('textarea.auto', m).forEach(grow);
   flipPlay(m, before);
   if (w && ui.tab === 'prompt') sortable($('#navlist'), '.navgrp', ids => { reorder(v.sections, ids); save(); render(); });
+  if (!w && S.settings.libSort === 'manual') sortable($('.lib', m), '.work[data-id]', ids => { reorder(S.works, ids); save(); render(); }, true);
+  if (w && ui.tab === 'ideas') sortable($('.notes', m), '.sticky', ids => { reorder(w.notes, ids); save(); render(); }, true);
   if (w && ui.tab === 'kb') sortable($('#kblist'), '.card', ids => { reorder(v.kb, ids); save(); render(); });
   if (w && ui.tab === 'mind') { mmBind(); mmDraw(); }
   if (aiUI.open) renderAI();
@@ -201,12 +246,37 @@ function softRender() {
 }
 function reorder(arr, ids) { const by = Object.fromEntries(arr.map(x => [x.id, x])); const next = ids.map(i => by[i]).filter(Boolean); arr.splice(0, arr.length, ...next); }
 
+// 작품 목록. 순서: 최신순(최근 작업) / 생성순 / 사용자 지정순(끌어서), 고정한 작품은 어느 순서에서든 맨 위. 보기: 카드 / 목록.
+const LIB_SORT = [['updated', '최신순 (최근 작업)'], ['created', '생성순 (먼저 만든 것부터)'], ['manual', '사용자 지정순 (끌어서)']];
+function libWorks() {
+  const m = S.settings.libSort, a = S.works.slice();
+  if (m === 'updated') a.sort((x, y) => String(y.updated).localeCompare(String(x.updated)));
+  else if (m === 'created') a.sort((x, y) => String(x.created).localeCompare(String(y.created)));
+  return a.filter(w => w.pin).concat(a.filter(w => !w.pin));
+}
 function viewLibrary() {
+  const st = S.settings, list = st.libView === 'list', manual = st.libSort === 'manual', works = libWorks();
+  const grip = manual ? '<span class="grip" title="끌어서 순서 변경">⋮⋮</span>' : '';
+  const pin = w => `<button class="pinb ${w.pin ? 'on' : ''}" data-act="workPin" data-id="${w.id}" aria-pressed="${!!w.pin}" title="${w.pin ? '상단 고정 풀기' : '목록 맨 위에 고정'}">${w.pin ? '고정됨' : '고정'}</button>`;
+  const thumb = w => `<div class="thumb" data-act="open" data-id="${w.id}" style="${w.thumb ? `background-image:url(${w.thumb})` : ''}">${w.thumb ? '' : esc(w.title.slice(0, 2))}</div>`;
+  const meta = w => `버전 ${w.versions.length}개 · ${fmtDate(w.updated)}`;
+  const card = w => `<article class="work ${w.pin ? 'pinned' : ''}" data-id="${w.id}">${thumb(w)}${grip}${pin(w)}
+    <div class="body"><h3 data-act="open" data-id="${w.id}">${esc(w.title)}</h3><div class="desc">${esc(w.desc)}</div><div class="hint num">${meta(w)}</div></div>
+    <div class="acts"><button class="btn sm accent" data-act="open" data-id="${w.id}">열기</button><span class="grow"></span><button class="icon" data-act="workDup" data-id="${w.id}">복제</button><button class="icon" data-act="workExport" data-id="${w.id}">내보내기</button><button class="icon" data-act="workDel" data-id="${w.id}">삭제</button></div></article>`;
+  const row = w => `<article class="work row ${w.pin ? 'pinned' : ''}" data-id="${w.id}">${grip}${thumb(w)}
+    <div class="body" data-act="open" data-id="${w.id}"><h3>${esc(w.title)}</h3><div class="hint num">${meta(w)}</div></div>${pin(w)}<button class="icon more" data-act="workMenu" data-id="${w.id}" aria-label="더 보기" title="복제·내보내기·삭제">⋯</button></article>`;
   return `<div class="head"><h2>작품</h2><span class="hint">작품마다 버전·로어북·아이디어·마인드맵을 따로 관리합니다.</span><span class="grow"></span><button class="btn" data-act="io">파일로 내보내기·가져오기</button></div>
-  <div class="lib">${S.works.map(w => `<article class="work"><div class="thumb" data-act="open" data-id="${w.id}" style="${w.thumb ? `background-image:url(${w.thumb})` : ''}">${w.thumb ? '' : esc(w.title.slice(0, 2))}</div>
-    <div class="body"><h3 data-act="open" data-id="${w.id}">${esc(w.title)}</h3><div class="desc">${esc(w.desc)}</div><div class="hint num">버전 ${w.versions.length}개 · ${fmtDate(w.updated)}</div></div>
-    <div class="acts"><button class="btn sm accent" data-act="open" data-id="${w.id}">열기</button><span class="grow"></span><button class="icon" data-act="workDup" data-id="${w.id}">복제</button><button class="icon" data-act="workExport" data-id="${w.id}">내보내기</button><button class="icon" data-act="workDel" data-id="${w.id}">삭제</button></div></article>`).join('')}
-    <button class="work new" data-act="workNew"><b>+ 새 작품</b><br><span class="hint">빈 작품으로 시작하거나,<br>기존 프롬프트를 붙여 넣어 자동 분할</span></button></div>`;
+  <div class="libbar"><select id="libSort" aria-label="작품 순서">${LIB_SORT.map(([k, t]) => `<option value="${k}" ${st.libSort === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <div class="seg" role="group" aria-label="보기 방식"><button data-act="libView" data-id="card" class="${list ? '' : 'on'}" aria-pressed="${!list}">카드</button><button data-act="libView" data-id="list" class="${list ? 'on' : ''}" aria-pressed="${list}">목록</button></div>
+    ${manual && works.length > 1 ? '<span class="hint">⋮⋮ 를 끌어 순서를 바꿉니다.</span>' : ''}</div>
+  <div class="lib ${list ? 'list' : ''}">${works.map(list ? row : card).join('')}
+    ${list ? '<button class="work row new" data-act="workNew"><b>+ 새 작품</b><span class="hint">빈 작품 또는 기존 프롬프트 붙여 넣기</span></button>' : '<button class="work new" data-act="workNew"><b>+ 새 작품</b><br><span class="hint">빈 작품으로 시작하거나,<br>기존 프롬프트를 붙여 넣어 자동 분할</span></button>'}</div>`;
+}
+function openWorkMenu(id) {
+  const w = find(S.works, id); if (!w) return; const b = (act, t, cls = '') => `<button class="btn ${cls}" data-act="menuDo" data-do="${act}" data-id="${w.id}">${t}</button>`;
+  modal(`<h3>${esc(w.title)}</h3><div class="hint num">버전 ${w.versions.length}개 · 만든 날 ${fmtDate(w.created)} · 최근 작업 ${fmtDate(w.updated)}</div>
+   <div class="menu">${b('open', '열기', 'accent')}${b('workPin', w.pin ? '상단 고정 풀기' : '목록 맨 위에 고정')}${b('workDup', '복제')}${b('workExport', '파일로 내보내기')}${b('workDel', '삭제', 'bad')}</div>
+   <div class="foot"><button class="btn" data-act="close">닫기</button></div>`);
 }
 
 // 섹션 = "# " 대분류. 그 안의 "## " 줄은 하위 분류로 목록에 들여 써서 보여 주고, 누르면 그 줄로 이동한다.
@@ -304,8 +374,8 @@ function viewPreview(w, v) {
 }
 
 function viewIdeas(w) {
-  return `<div class="head"><h2>아이디어 노트</h2><span class="hint">작품 단위로 저장됩니다. AI 답변도 여기로 보낼 수 있습니다.</span><span class="grow"></span><button class="btn" data-act="buildOpen" title="노트·마인드맵을 내가 쓰던 프롬프트 뼈대에 맞춰 새 버전으로 구성">아이디어로 프롬프트 구성</button><button class="btn" data-act="ideaAI">AI에게 요소 추천받기</button><button class="btn accent" data-act="noteAdd">+ 노트</button></div>
-  <div class="notes">${w.notes.map(n => `<div class="sticky" data-c="${n.c || 0}"><textarea class="auto" data-in="note.text" data-id="${n.id}" placeholder="떠오른 것을 적어 두세요">${esc(n.text)}</textarea><div class="acts"><button class="icon" data-act="noteColor" data-id="${n.id}">색</button><button class="icon" data-act="noteAsk" data-id="${n.id}" title="이 노트를 AI에게 보내 발전시키기">AI로 발전</button><button class="icon" data-act="copyNote" data-id="${n.id}">복사</button><button class="icon" data-act="noteDel" data-id="${n.id}">삭제</button></div></div>`).join('')}</div>
+  return `<div class="head"><h2>아이디어 노트</h2><span class="hint">작품 단위로 저장됩니다. AI 답변도 여기로 보낼 수 있습니다. 순서는 ⋮⋮ 를 끌거나 ▲▼ 로 바꿉니다.</span><span class="grow"></span><button class="btn" data-act="buildOpen" title="노트·마인드맵을 내가 쓰던 프롬프트 뼈대에 맞춰 새 버전으로 구성">아이디어로 프롬프트 구성</button><button class="btn" data-act="ideaAI">AI에게 요소 추천받기</button><button class="btn accent" data-act="noteAdd">+ 노트</button></div>
+  <div class="notes">${w.notes.map((n, i) => `<div class="sticky" data-id="${n.id}" data-c="${n.c || 0}"><textarea class="auto" data-in="note.text" data-id="${n.id}" placeholder="떠오른 것을 적어 두세요">${esc(n.text)}</textarea><div class="acts"><span class="grip" title="끌어서 순서 변경">⋮⋮</span><button class="icon" data-act="noteUp" data-id="${n.id}" ${i ? '' : 'disabled'} title="앞으로" aria-label="앞으로">▲</button><button class="icon" data-act="noteDown" data-id="${n.id}" ${i < w.notes.length - 1 ? '' : 'disabled'} title="뒤로" aria-label="뒤로">▼</button><span class="grow"></span><button class="icon" data-act="noteColor" data-id="${n.id}">색</button><button class="icon" data-act="noteAsk" data-id="${n.id}" title="이 노트를 AI에게 보내 발전시키기">AI로 발전</button><button class="icon" data-act="copyNote" data-id="${n.id}">복사</button><button class="icon" data-act="noteDel" data-id="${n.id}">삭제</button></div></div>`).join('')}</div>
   ${w.notes.length ? '' : '<div class="note">노트가 없습니다. 캐릭터 설정, 장면 씨앗, 테스트 중 발견한 문제 등을 자유롭게 적어 두세요.</div>'}`;
 }
 
@@ -451,7 +521,7 @@ function viewRules(w, v) {
 }
 
 // ───────── 끌어서 순서 바꾸기(마우스·터치 공용) ─────────
-function sortable(box, sel, done) {
+function sortable(box, sel, done, grid) {
   if (!box) return;
   box.addEventListener('pointerdown', e => {
     const g = e.target.closest('.grip'); if (!g) return;
@@ -462,10 +532,10 @@ function sortable(box, sel, done) {
       if (ev.clientY < 110) window.scrollBy(0, -14); else if (ev.clientY > innerHeight - 70) window.scrollBy(0, 14);
       if (Date.now() < hold) return;
       const sibs = [...box.children].filter(x => x !== item && x.matches(sel)); let before = null;
-      for (const s of sibs) { const r = s.getBoundingClientRect(); if (ev.clientY < r.top + r.height / 2) { before = s; break; } }
-      const stay = before ? item.nextElementSibling === before : box.lastElementChild === item; if (stay) return;
+      for (const s of sibs) { const r = s.getBoundingClientRect(); if (grid ? ev.clientY < r.top || (ev.clientY <= r.bottom && ev.clientX < r.left + r.width / 2) : ev.clientY < r.top + r.height / 2) { before = s; break; } }
+      const last = sibs[sibs.length - 1], stay = before ? item.nextElementSibling === before : !last || last.nextElementSibling === item; if (stay) return;
       const fl = motionOn() && item.animate ? [item, ...sibs].map(x => [x, x.getBoundingClientRect()]) : null;
-      if (before) box.insertBefore(item, before); else box.appendChild(item);
+      box.insertBefore(item, before || last.nextSibling);
       if (fl) { hold = Date.now() + 170; fl.forEach(([x, a]) => { const b = x.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top; if (dx || dy) try { x.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], { duration: 160, easing: EASE }); } catch (e) { /* 무시 */ } }); }
     };
     const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up); item.classList.remove('dragging'); done([...box.children].filter(x => x.matches(sel)).map(x => x.dataset.id)); };
@@ -563,10 +633,23 @@ function thinkCfg(model, lv) {
   if (legacyModel(model)) return { thinkingBudget: { minimal: /pro/.test(model) ? 128 : 0, low: 1024, medium: 8192, high: 24576 }[lv] };
   return { thinkingLevel: lv };
 }
-async function gemini({ system, contents, temp, kind, json, think }) {
+// 스트리밍 응답(SSE)을 읽어 일반 응답과 같은 모양으로 합친다. 글자가 올 때마다 onText(지금까지의 글)를 부른다.
+async function readSSE(res, onText) {
+  const rd = res.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', usage = null, finish = '', feedback = null;
+  const eat = line => {
+    if (!line.startsWith('data:')) return; let j; try { j = JSON.parse(line.slice(5)); } catch (e) { return; }
+    if (j.error) throw new Error('API 오류: ' + (j.error.message || '알 수 없는 오류'));
+    const c = (j.candidates || [])[0]; if (j.usageMetadata) usage = j.usageMetadata; if (j.promptFeedback) feedback = j.promptFeedback;
+    if (c) { if (c.finishReason) finish = c.finishReason; const add = ((c.content && c.content.parts) || []).filter(p => !p.thought).map(p => p.text || '').join(''); if (add) { text += add; try { onText(text); } catch (e) { /* 화면 갱신 실패는 무시 */ } } }
+  };
+  for (;;) { const { done, value } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split(/\r?\n/); buf = lines.pop(); lines.forEach(eat); }
+  if (buf) eat(buf);
+  return { candidates: [{ content: { parts: [{ text }] }, finishReason: finish }], usageMetadata: usage || {}, promptFeedback: feedback };
+}
+async function gemini({ system, contents, temp, kind, json, think, onText, signal }) {
   const st = S.settings; if (!st.apiKey) { openSettings(); throw new Error('설정에서 Gemini API 키를 먼저 넣어 주세요.'); }
   const model = st.model.replace(/^models\//, '');
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const stream = !!onText, url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
   const cats = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_CIVIC_INTEGRITY'];
   // 모델마다 허용하는 값이 달라 400이 나면 다음 조합으로 재시도한다. 어느 조합이든 "차단 없음"이다.
   const tries = [[cats, 'OFF'], [cats, 'BLOCK_NONE'], [cats.slice(0, 4), 'BLOCK_NONE']];
@@ -575,9 +658,12 @@ async function gemini({ system, contents, temp, kind, json, think }) {
     const [c, th] = tries[ti], tc = thinkCfg(model, lv);
     const body = { contents, generationConfig: Object.assign({ temperature: temp ?? st.temp }, json ? { responseMimeType: 'application/json' } : {}, tc ? { thinkingConfig: tc } : {}), safetySettings: c.map(x => ({ category: x, threshold: th })) };
     if (system) body.systemInstruction = { parts: [{ text: system }] };
-    let res; try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': st.apiKey }, body: JSON.stringify(body) }); }
-    catch (e) { throw new Error('네트워크 오류: 인터넷 연결을 확인해 주세요. (' + e.message + ')'); }
-    const j = await res.json().catch(() => ({}));
+    const netErr = e => new Error(e && e.name === 'AbortError' ? '요청을 중단했습니다.' : '네트워크 오류: 인터넷 연결을 확인해 주세요. 응답을 기다리는 동안 앱을 다른 화면으로 바꾸거나 화면을 끄면 끊길 수 있습니다. (' + (e && e.message) + ')');
+    let res; try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': st.apiKey }, body: JSON.stringify(body), signal }); }
+    catch (e) { throw netErr(e); }
+    let j;
+    if (res.ok && stream && res.body && res.body.getReader) { try { j = await readSSE(res, onText); } catch (e) { throw /^API 오류/.test(e.message) ? e : netErr(e); } }
+    else { try { j = await res.json(); } catch (e) { j = {}; } if (Array.isArray(j)) j = j[0] || {}; }
     if (!res.ok) {
       const em = (j.error && j.error.message) || ''; last = new Error(`API 오류 ${res.status}: ${em || '알 수 없는 오류'}${res.status === 404 ? ' — 설정에서 모델 이름을 확인해 주세요.' : res.status === 429 ? ' — 사용량 한도입니다. 잠시 뒤 다시 시도해 주세요.' : ''}`);
       if (res.status === 400 && tc && /think|budget|level|reason/i.test(em)) { lv = lv === 'minimal' ? 'low' : 'auto'; continue; } // 이 모델이 받지 않는 추론 단계
@@ -588,8 +674,8 @@ async function gemini({ system, contents, temp, kind, json, think }) {
     const usage = { t: now(), model, kind, inTok, outTok, think, usd, lv: lv === lvAsk ? lv : lv + '(' + lvAsk + ' 불가)' };
     S.usage.calls++; S.usage.inTok += inTok; S.usage.outTok += outTok; S.usage.usd += usd; S.usage.log.unshift(usage); S.usage.log.length = Math.min(S.usage.log.length, 100); save();
     const cand = (j.candidates || [])[0], text = ((cand && cand.content && cand.content.parts) || []).filter(p => !p.thought).map(p => p.text || '').join('');
-    if (!text) throw new Error(`응답이 비어 있습니다. (사유: ${(j.promptFeedback && j.promptFeedback.blockReason) || (cand && cand.finishReason) || '알 수 없음'})`);
-    return { text, usage };
+    if (!text) { const why = (j.promptFeedback && j.promptFeedback.blockReason) || (cand && cand.finishReason) || '알 수 없음'; throw new Error(`응답이 비어 있습니다. (사유: ${why})${why === 'MAX_TOKENS' ? ' — 모델이 생각하는 데 출력 한도를 다 썼습니다. 추론 단계를 낮추고 다시 시도해 주세요.' : /SAFETY|PROHIBITED|BLOCK/.test(why) ? ' — 모델이 내용을 이유로 답을 거부했습니다. 다른 모델로 바꿔 보세요.' : ''}`); }
+    return { text, usage, finish: (cand && cand.finishReason) || '' };
   }
   throw last;
 }
@@ -768,11 +854,22 @@ const SYS_BUILD = `너는 "크랙(Crack)" AI 캐릭터 채팅 플랫폼의 시�
 2. 뼈대의 표기법을 그대로 따른다: 목록 기호, 줄바꿈 방식, 기호·약어(→ / · = 等), 한자 압축 여부, {{user}}/{{char}} 또는 🅄/🄲 같은 ID 표기, 치환 기호, 말투(명령형·명사형 종결 등).
 3. 캐릭터·세계관과 무관한 운영 섹션(출력 규칙, 문체, 금지 사항, 진행 방식, HUD·상태창 형식, 기억 주석 형식 등)은 뼈대 내용을 거의 그대로 재사용하되, 새 작품과 충돌하는 고유명사·설정만 바꾼다.
 4. 캐릭터·관계·세계관·사건처럼 작품마다 다른 섹션은 아이디어를 재료로 새로 쓴다. 뼈대의 옛 캐릭터 설정은 남기지 않는다.
-5. 아이디어에 없는 필수 정보는 아이디어와 어울리게 최소한으로 보충하고, 보충한 것을 notes 에 빠짐없이 적는다. 아이디어끼리 충돌하면 더 구체적인 쪽을 따르고 notes 에 적는다.
+5. 아이디어에 없는 필수 정보는 아이디어와 어울리게 최소한으로 보충하고, 보충한 것을 <<<메모>>> 에 빠짐없이 적는다. 아이디어끼리 충돌하면 더 구체적인 쪽을 따르고 <<<메모>>> 에 적는다.
 6. 메인 프롬프트에는 늘 지켜야 할 핵심만, 특정 장소·인물·사건처럼 가끔 필요한 세부는 로어북으로 보낸다(로어북을 만들라는 요청이 있을 때).
 7. 성인 대상 창작물(BL 포함)일 수 있다. 소재를 순화하거나 훈계하지 않는다.
-[출력] 아래 JSON 하나만 출력한다. 설명문·코드블록 표시 금지.
-{"sections":[{"label":"섹션 이름(헤더와 같으면 빈 문자열)","text":"섹션 본문(헤더 줄 포함)"}],"kb":[{"name":"슬롯 이름","triggers":["트리거"],"text":"내용"}],"starts":[{"name":"시작상황 이름","text":"첫 장면","sub":"서브 컨텍스트"}],"notes":"보충·판단한 점을 짧은 목록으로"}`;
+[출력 형식] 아래처럼 "표시 줄"로 구분한 일반 텍스트만 출력한다. JSON 이나 코드블록으로 감싸지 않고, 인사·설명을 앞뒤에 붙이지 않는다. 표시 줄은 줄 맨 앞에서 시작해 한 줄을 통째로 쓴다. 로어북·시작상황을 만들지 않을 때는 그 표시 줄을 아예 쓰지 않는다.
+<<<섹션 | 섹션 이름>>>
+(섹션 본문. # 헤더 줄부터 그대로)
+(…섹션마다 위 두 가지를 반복…)
+<<<로어북 | 슬롯 이름 | 트리거1, 트리거2>>>
+(슬롯 내용)
+<<<시작상황 | 시작상황 이름>>>
+(첫 장면)
+<<<서브>>>
+(바로 위 시작상황의 서브 컨텍스트)
+<<<메모>>>
+(보충·판단한 점을 짧은 목록으로)
+<<<끝>>>`;
 function buildSources() {
   const o = []; S.works.forEach(w => w.versions.forEach(v => { const n = mainText(v).length; if (n > 30) o.push({ key: w.id + '/' + v.id, w, v, n, label: `${w.title} · ${v.name} (섹션 ${v.sections.length}개 · ${nf(n)}자)` }); }));
   return o.sort((a, b) => (b.v.updated || 0) - (a.v.updated || 0));
@@ -780,10 +877,11 @@ function buildSources() {
 function openBuild() {
   const w = W(); if (!w) return; const srcs = buildSources(), cur = srcs.find(x => x.key === w.id + '/' + V().id);
   if (!ui.build || ui.build.wid !== w.id) ui.build = { wid: w.id, src: (cur || srcs[0] || { key: 'none' }).key, notes: {}, mind: true, kb: true, st: true, target: 0, extra: '', res: null, busy: false };
-  const b = ui.build; if (b.res && !b.busy) return showBuild();
+  const b = ui.build; if (b.busy) return buildBusy(); if (b.res) return showBuild();
   const notes = w.notes.filter(n => n.text.trim()), nodes = (w.mind && w.mind.nodes || []).filter(n => n.text && n.text.trim()).length;
   const src = srcs.find(x => x.key === b.src), tgt = b.target || Math.min(L.MAIN, Math.max(2000, src ? src.n : 5000));
   modal(`<h3>아이디어로 프롬프트 구성</h3>
+   ${b.err ? `<div class="msg err" id="buildErr"><b>구성하지 못했습니다.</b>\n${esc(b.err)}</div>` : ''}
    <span class="hint">아이디어 노트·마인드맵을 재료로, 고른 프롬프트의 <b>섹션 순서·헤더·표기법·문체</b>를 그대로 따라 새 프롬프트를 만듭니다. 출력 규칙·문체처럼 작품과 무관한 섹션은 뼈대 내용을 거의 그대로 가져옵니다. 결과는 확인 후 <b>새 버전</b>으로만 추가됩니다.</span>
    <label class="f">뼈대로 쓸 프롬프트<select id="buildSrc">${srcs.map(x => `<option value="${x.key}" ${x.key === b.src ? 'selected' : ''}>${esc(x.label)}${x.w.id === w.id && x.v.id === V().id ? ' — 지금 버전' : ''}</option>`).join('')}<option value="none" ${b.src === 'none' ? 'selected' : ''}>뼈대 없이 (AI 기본 구성)</option></select></label>
    <b>재료</b>
@@ -793,19 +891,58 @@ function openBuild() {
    <label class="f">메인 프롬프트 목표 글자수 (최대 ${nf(L.MAIN)})<input type="number" id="buildTarget" min="500" max="${L.MAIN}" step="100" value="${tgt}"></label>
    <label class="f">추가 요청 (선택)<textarea id="buildExtra" rows="3" placeholder="예: 시점은 3인칭 관찰자로, 상태창은 빼고, 관계 진전은 느리게">${esc(b.extra)}</textarea></label>
    <span class="hint">추론 단계: ${thinkName(S.settings.think)} — 구성은 "높음"을 권합니다(AI 창 위쪽·설정에서 변경). 결과가 길어 요청 한 번에 수십 원이 들 수 있습니다.</span>
-   ${b.busy ? '<div class="msg model"><span class="spin"></span> 구성하는 중… 1~2분 걸릴 수 있습니다. 창을 닫아도 계속 진행되며, 끝나면 알려 드립니다.</div>' : ''}
-   ${b.err ? `<div class="msg err">${esc(b.err)}</div>` : ''}
-   <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn accent" data-act="buildRun" ${b.busy ? 'disabled' : ''}>구성하기</button></div>`, true);
+   <div class="foot"><button class="btn" data-act="close">닫기</button><button class="btn accent" data-act="buildRun">${b.err ? '다시 구성하기' : '구성하기'}</button></div>`, true);
+  const ov = $('#modal .ov'); if (ov) ov.scrollTop = 0;
 }
+// 구성 중 화면: 받은 글자수와 지금 쓰고 있는 부분을 실시간으로 보여 준다(멈춘 것처럼 보이지 않게).
+function buildBusy() {
+  modal(`<h3>아이디어로 프롬프트 구성</h3>
+   <div class="msg model"><span class="spin"></span> <b id="buildStat">AI에게 보내는 중…</b><div class="hint">보통 1~3분 걸립니다. 이 창은 닫아도 계속 진행되고 끝나면 알려 드립니다. 다만 앱을 다른 화면으로 바꾸거나 화면을 끄면 끊길 수 있습니다.</div></div>
+   <pre class="code" id="buildLive" hidden></pre>
+   <div class="foot"><button class="btn" data-act="buildStop">중단</button><button class="btn" data-act="close">창 닫기 (계속 진행)</button></div>`, true);
+  buildTick();
+}
+function buildTick() {
+  const b = ui.build, st = $('#buildStat'); if (!b || !b.busy || !st) return; const sec = Math.round((Date.now() - b.t0) / 1000), n = (b.live || '').length;
+  st.textContent = n ? `쓰는 중… ${nf(n)}자 받음 · ${sec}초` : `AI가 생각하는 중… ${sec}초`;
+  const lv = $('#buildLive'); if (lv && n) { lv.hidden = false; lv.textContent = b.live.slice(-600); lv.scrollTop = lv.scrollHeight; }
+}
+// 응답 읽기: "<<<섹션 | 이름>>>" 같은 표시 줄로 나눈다. 길고 따옴표·줄바꿈이 많은 글은 JSON 으로 받으면 깨지기 쉬워 이 형식을 쓴다.
+// 응답이 중간에 끊겨도 받은 데까지는 살린다. 모델이 예전 형식(JSON)으로 답해도 읽는다.
 function buildParse(text) {
-  let t = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''); let j;
-  try { j = JSON.parse(t); } catch (e) { const a = t.indexOf('{'), z = t.lastIndexOf('}'); if (a < 0 || z < a) throw new Error('AI 응답을 읽지 못했습니다(형식 오류). 다시 시도해 주세요.'); j = JSON.parse(t.slice(a, z + 1)); }
-  const str = x => typeof x === 'string' ? x : x == null ? '' : String(x);
-  const sections = (Array.isArray(j.sections) ? j.sections : []).map(x => ({ label: str(x.label).trim(), text: str(x.text).replace(/\s+$/, '') })).filter(x => x.text.trim());
-  if (!sections.length) throw new Error('AI가 섹션을 만들지 못했습니다. 재료를 더 넣거나 다시 시도해 주세요.');
-  const kb = (Array.isArray(j.kb) ? j.kb : []).slice(0, L.KBN).map(x => ({ name: str(x.name).trim(), triggers: (Array.isArray(x.triggers) ? x.triggers : str(x.triggers).split(/[,\n]/)).map(y => str(y).trim()).filter(Boolean).slice(0, L.TRG), text: str(x.text) })).filter(x => x.text.trim() || x.name);
-  const starts = (Array.isArray(j.starts) ? j.starts : []).slice(0, L.STN).map(x => ({ name: str(x.name).trim(), text: str(x.text), sub: str(x.sub) })).filter(x => x.text.trim() || x.sub.trim());
-  return { sections, kb, starts, notes: Array.isArray(j.notes) ? j.notes.map(str).join('\n') : str(j.notes) };
+  const str = x => typeof x === 'string' ? x : x == null ? '' : String(x), src = str(text).replace(/\r\n?/g, '\n');
+  let secs = [], kbs = [], sts = [], notes = '', done = false;
+  if (/^\s*<<<\s*섹션/m.test(src)) {
+    let cur = null; const body = () => cur ? cur.lines.join('\n').replace(/^\n+|\s+$/g, '') : '';
+    const flush = () => { if (!cur) return; const t = body(), a = cur.args;
+      if (cur.kind === '섹션') secs.push({ label: a.filter(x => !/^\d+$/.test(x) && !/^[\d,]+\s*자$/.test(x))[0] || '', text: t });
+      else if (cur.kind === '로어북') kbs.push({ name: a[0] || '', triggers: a.slice(1).join(',').split(/[,，、\n]/), text: t });
+      else if (cur.kind === '시작상황') sts.push({ name: a[0] || '', text: t, sub: '' });
+      else if (cur.kind === '서브') { if (sts.length) sts[sts.length - 1].sub = t; }
+      else if (cur.kind === '메모') notes = t; cur = null; };
+    for (const line of src.split('\n')) {
+      const m = line.match(/^\s*<<<\s*(섹션|로어북|시작상황|서브|메모|끝)\s*\d*\s*(?:\|(.*?))?\s*>>>\s*$/);
+      if (!m) { if (cur) cur.lines.push(line); continue; }
+      flush(); if (m[1] === '끝') { done = true; break; }
+      cur = { kind: m[1], args: (m[2] || '').split('|').map(x => x.trim()).filter(Boolean), lines: [] };
+    }
+    flush();
+  } else {
+    let t = src.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''), j = null;
+    try { j = JSON.parse(t); } catch (e) { const a = t.indexOf('{'), z = t.lastIndexOf('}'); if (a >= 0 && z > a) { try { j = JSON.parse(t.slice(a, z + 1)); } catch (e2) { /* 아래에서 처리 */ } } }
+    if (Array.isArray(j)) j = j.find(x => x && x.sections) || j[0]; if (j && !j.sections && j.prompt && j.prompt.sections) j = j.prompt;
+    if (j && typeof j === 'object') { done = true;
+      secs = (Array.isArray(j.sections) ? j.sections : []).map(x => typeof x === 'string' ? { label: '', text: x } : { label: str(x && x.label), text: str(x && x.text) });
+      kbs = (Array.isArray(j.kb) ? j.kb : []).map(x => ({ name: str(x.name), triggers: Array.isArray(x.triggers) ? x.triggers : str(x.triggers).split(/[,\n]/), text: str(x.text) }));
+      sts = (Array.isArray(j.starts) ? j.starts : []).map(x => ({ name: str(x.name), text: str(x.text), sub: str(x.sub) }));
+      notes = Array.isArray(j.notes) ? j.notes.map(str).join('\n') : str(j.notes);
+    } else if (/^#\s/m.test(src)) secs = splitPrompt(src.slice(src.search(/^#\s/m)).replace(/\n```\s*$/, '')).map(x => ({ label: '', text: x.text })); // 형식을 안 지키고 프롬프트만 써 준 경우: # 헤더로 나눠 살린다
+  }
+  const sections = secs.map(x => ({ label: str(x.label).trim(), text: str(x.text).replace(/\s+$/, '') })).filter(x => x.text.trim());
+  if (!sections.length) throw new Error('AI 응답에서 프롬프트를 찾지 못했습니다. 다시 시도하거나 추론 단계·모델을 바꿔 보세요.' + (src.trim() ? '\n\n[AI 응답 앞부분]\n' + src.trim().slice(0, 300) : ''));
+  const kb = kbs.slice(0, L.KBN).map(x => ({ name: str(x.name).trim(), triggers: [...new Set(x.triggers.map(y => str(y).trim()).filter(Boolean))].slice(0, L.TRG), text: str(x.text) })).filter(x => x.text.trim() || x.name);
+  const starts = sts.slice(0, L.STN).map(x => ({ name: str(x.name).trim(), text: str(x.text), sub: str(x.sub) })).filter(x => x.text.trim() || x.sub.trim());
+  return { sections, kb, starts, notes, done };
 }
 async function runBuild() {
   const w = W(), b = ui.build; if (!w || !b || b.busy) return;
@@ -821,10 +958,16 @@ async function runBuild() {
     if (v.subs.some(subOk)) skel += `\n\n[뼈대가 쓰는 치환 기호(원래 표현=기호) — 새 프롬프트에서도 같은 기호를 쓴다]\n` + v.subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ');
   }
   const req = `[새 작품] ${w.title}\n[소개] ${w.desc || '-'}\n\n[재료 — 아이디어 노트]\n${notes.map(n => '- ' + n.text.trim()).join('\n') || '(없음)'}\n\n[재료 — 마인드맵]\n${mind || '(없음)'}\n\n[뼈대]\n${skel}\n\n[요청]\n- 메인 프롬프트(켠 섹션 합계) 목표 약 ${b.target}자, 절대 ${L.MAIN}자 초과 금지.\n- 로어북: ${b.kb ? `필요한 만큼(최대 ${L.KBN}슬롯), 슬롯당 ${L.KBC}자 이하.` : '만들지 않는다(빈 배열).'}\n- 시작상황: ${b.st ? `1~${L.STN}개, 첫 장면 ${L.STC}자·서브 컨텍스트 ${L.SUB}자 이하.` : '만들지 않는다(빈 배열).'}${b.extra.trim() ? '\n- 추가 요청: ' + b.extra.trim() : ''}`;
-  b.busy = true; b.err = ''; b.res = null; openBuild();
-  try { const r = await gemini({ system: SYS_BUILD, json: true, temp: 0.7, kind: '프롬프트 구성', contents: [{ role: 'user', parts: [{ text: req }] }] }); b.res = Object.assign(buildParse(r.text), { usage: r.usage, srcKey: b.src, wantKb: b.kb, wantSt: b.st }); }
-  catch (e) { b.err = e.message; }
-  b.busy = false; const here = $('#buildSrc') || $('#buildOut');
+  b.busy = true; b.err = ''; b.res = null; b.live = ''; b.t0 = Date.now(); b.ctrl = window.AbortController ? new AbortController() : null; openBuild();
+  const timer = setInterval(buildTick, 1000);
+  try {
+    const r = await gemini({ system: SYS_BUILD, temp: 0.7, kind: '프롬프트 구성', contents: [{ role: 'user', parts: [{ text: req }] }], signal: b.ctrl ? b.ctrl.signal : undefined, onText: t => { b.live = t; buildTick(); } });
+    b.res = Object.assign(buildParse(r.text), { usage: r.usage, srcKey: b.src, wantKb: b.kb, wantSt: b.st }); b.res.cut = r.finish === 'MAX_TOKENS' || !b.res.done;
+  } catch (e) {
+    b.err = e.message;
+    if (b.live && !/중단/.test(e.message)) { try { b.res = Object.assign(buildParse(b.live), { usage: { inTok: 0, outTok: 0, usd: 0 }, srcKey: b.src, wantKb: b.kb, wantSt: b.st, cut: true }); b.err = ''; } catch (e2) { /* 살릴 것이 없으면 오류를 그대로 보여 준다 */ } } // 도중에 끊겼어도 받은 데까지는 살린다
+  }
+  clearInterval(timer); b.busy = false; const here = $('#buildSrc') || $('#buildOut') || $('#buildStat');
   if (here && ui.build === b && W() && W().id === b.wid) { if (b.res) showBuild(); else openBuild(); }
   else toast(b.res ? '프롬프트 구성이 끝났습니다 — 아이디어 탭의 "아이디어로 프롬프트 구성"에서 결과를 보세요' : '프롬프트 구성 실패: ' + b.err, 6000);
 }
@@ -832,6 +975,7 @@ function showBuild() {
   const b = ui.build, r = b.res, main = r.sections.map(x => x.text).join('\n'), cls = (n, m) => n > m ? 'bad-t' : '';
   modal(`<h3>구성 결과 — 확인 후 새 버전으로 추가</h3>
    <div class="tiles"><div class="tile"><b class="num ${cls(main.length, L.MAIN)}">${nf(main.length)}</b><span>메인 / ${nf(L.MAIN)}자 · 섹션 ${r.sections.length}개</span></div><div class="tile"><b class="num">${r.kb.length}</b><span>로어북 슬롯${r.wantKb ? '' : ' (안 만듦)'}</span></div><div class="tile"><b class="num">${r.starts.length}</b><span>시작상황${r.wantSt ? '' : ' (안 만듦)'}</span></div></div>
+   ${r.cut ? '<div class="note warn"><b>응답이 중간에 끊겼을 수 있습니다.</b> 받은 데까지만 담았으니 끝부분이 빠졌는지 확인해 주세요. 빠졌다면 "다시 구성"에서 목표 글자수를 줄이거나 추론 단계를 낮춰 보세요.</div>' : ''}
    ${main.length > L.MAIN ? `<div class="note warn">메인 프롬프트가 한도를 ${nf(main.length - L.MAIN)}자 넘습니다. 추가한 뒤 압축(극단)이나 직접 편집으로 줄여 주세요.</div>` : ''}
    ${r.notes ? `<div class="note"><b>AI가 보충·판단한 점</b><br>${esc(r.notes).replace(/\n/g, '<br>')}</div>` : ''}
    <div id="buildOut" class="blist">
@@ -1111,6 +1255,10 @@ const A = {
   },
   workDup(el) { const w = find(S.works, el.dataset.id), c = normWork(JSON.parse(JSON.stringify(w))); c.id = uid(); c.title += ' (사본)'; c.created = c.updated = now(); S.works.push(c); save(); render(); },
   workDel(el) { const w = find(S.works, el.dataset.id); if (!confirm(`"${w.title}" 작품과 그 안의 모든 버전을 삭제할까요? 되돌릴 수 없습니다.`)) return; S.works = S.works.filter(x => x !== w); save(); render(); },
+  workPin(el) { const w = find(S.works, el.dataset.id); if (!w) return; w.pin = !w.pin; save(); render(); toast(w.pin ? '맨 위에 고정했습니다' : '고정을 풀었습니다', 1600); },
+  workMenu(el) { openWorkMenu(el.dataset.id); },
+  menuDo(el) { closeModal(); const fn = A[el.dataset.do]; if (fn) fn(el); },
+  libView(el) { S.settings.libView = el.dataset.id; save(); render(); },
   workExport(el) { const w = find(S.works, el.dataset.id); saveFile(`${safeName(w.title)}_${new Date().toISOString().slice(0, 10)}.cps.json`, pack([w], 'work')); },
   exportAll() { saveFile(`크랙프롬프트_전체백업_${new Date().toISOString().slice(0, 10)}.cps.json`, pack(S.works, 'all')); },
   exportCopy() { copy(pack(S.works, 'all'), '전체 백업을 텍스트로 복사했습니다'); },
@@ -1152,6 +1300,8 @@ const A = {
 
   noteAdd() { W().notes.unshift({ id: uid(), text: '', c: 0 }); save(); render(); const t = $('.sticky textarea'); t && t.focus(); },
   noteDel(el) { const a = W().notes, n = find(a, el.dataset.id); if (n.text.trim() && !confirm('이 노트를 삭제할까요?')) return; a.splice(a.indexOf(n), 1); save(); render(); },
+  noteUp(el) { const a = W().notes, i = a.findIndex(n => n.id === el.dataset.id); if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; save(); render(); } },
+  noteDown(el) { const a = W().notes, i = a.findIndex(n => n.id === el.dataset.id); if (i >= 0 && i < a.length - 1) { [a[i + 1], a[i]] = [a[i], a[i + 1]]; save(); render(); } },
   noteColor(el) { const n = find(W().notes, el.dataset.id); n.c = ((n.c || 0) + 1) % 5; save(); render(); },
   copyNote(el) { copy(find(W().notes, el.dataset.id).text); },
   noteAsk(el) { const n = find(W().notes, el.dataset.id); if (!n.text.trim()) return; A.aiOpenChat(); aiSend('아래 아이디어를 이 작품에 맞게 발전시켜줘. 서로 다른 방향 3가지로, 각각 프롬프트나 로어북에 넣을 문장 예시까지.\n\n' + n.text); },
@@ -1203,6 +1353,7 @@ const A = {
   buildRun() { runBuild(); },
   buildApply() { applyBuild(); },
   buildBack() { ui.build.res = null; openBuild(); },
+  buildStop() { const b = ui.build; if (b && b.busy && b.ctrl) b.ctrl.abort(); },
   useReset() { if (!confirm('사용량 기록을 지울까요?')) return; S.usage = { calls: 0, inTok: 0, outTok: 0, usd: 0, log: [] }; save(); renderAI(); },
   hit(el) { const h = ui.hits[+el.dataset.id]; jump(h.go, h.i, h.len); },
   replAll() {
@@ -1252,7 +1403,7 @@ document.addEventListener('click', e => {
   const fn = A[el.dataset.act]; if (fn) fn(el, e);
 });
 document.addEventListener('input', e => {
-  const t = e.target, k = t.dataset.in, v = V(), w = W(); if (t.classList.contains('auto')) grow(t);
+  const t = e.target, k = t.dataset.in, v = V(), w = W(); if (t.classList.contains('auto')) grow(t); caretSoon();
   if (t.id === 'searchIn') { drawSearch(); return; }
   if (t.id === 'aiIn') { aiUI.draft = t.value; return; }
   if (!k) return; const id = t.dataset.id;
@@ -1275,7 +1426,8 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const t = e.target, k = t.dataset.in, v = V();
-  if (t.id === 'verSel') { W().curVer = t.value; ui.undo = []; $('#undoBtn').hidden = true; save(); render(); }
+  if (t.id === 'libSort') { S.settings.libSort = t.value; save(); render(); }
+  else if (t.id === 'verSel') { W().curVer = t.value; ui.undo = []; $('#undoBtn').hidden = true; save(); render(); }
   else if (t.id === 'diffA' || t.id === 'diffB') openDiff($('#diffA').value, $('#diffB').value);
   else if (t.id === 'joinBlank') { v.joinBlank = t.checked; save(); refreshMain(); }
   else if (t.id === 'cmpTarget') { aiUI.cmpTarget = t.value; aiUI.cmp = null; if (!aiUI.busy) aiUI.batch = null; renderAI(); }
@@ -1308,7 +1460,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'Escape' && $('#modal').innerHTML) closeModal();
   else if (e.key === 'Enter' && t.dataset && t.dataset.ask && t.tagName === 'INPUT' && !e.isComposing) A.askOk();
 });
-window.addEventListener('resize', () => { if (ui.tab === 'mind') mmDraw(); clearTimeout(regrow.t); regrow.t = setTimeout(() => { regrow(); tabInk(); }, 120); });
+window.addEventListener('resize', () => { kbSync(); if (ui.tab === 'mind') mmDraw(); clearTimeout(regrow.t); regrow.t = setTimeout(() => { regrow(); tabInk(); }, 120); });
 
 (async function init() {
   await DB.open(); const loaded = await DB.get('state');
