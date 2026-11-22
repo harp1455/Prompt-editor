@@ -633,39 +633,52 @@ function thinkCfg(model, lv) {
   if (legacyModel(model)) return { thinkingBudget: { minimal: /pro/.test(model) ? 128 : 0, low: 1024, medium: 8192, high: 24576 }[lv] };
   return { thinkingLevel: lv };
 }
-// 스트리밍 응답(SSE)을 읽어 일반 응답과 같은 모양으로 합친다. 글자가 올 때마다 onText(지금까지의 글)를 부른다.
-async function readSSE(res, onText) {
-  const rd = res.body.getReader(), dec = new TextDecoder(); let buf = '', text = '', usage = null, finish = '', feedback = null;
+// 스트리밍 응답(SSE)을 읽어 일반 응답과 같은 모양으로 합친다. 글자가 올 때마다 on.text(지금까지의 글), 생각 요약이 올 때마다 on.think(요약), 무엇이든 오면 on.beat() 를 부른다.
+async function readSSE(res, on) {
+  const rd = res.body.getReader(), dec = new TextDecoder(); let buf = '', raw = '', seen = false, text = '', thought = '', usage = null, finish = '', feedback = null;
+  const call = (f, x) => { if (f) try { f(x); } catch (e) { /* 화면 갱신 실패는 무시 */ } };
   const eat = line => {
-    if (!line.startsWith('data:')) return; let j; try { j = JSON.parse(line.slice(5)); } catch (e) { return; }
+    if (!line.startsWith('data:')) return; let j; try { j = JSON.parse(line.slice(5)); } catch (e) { return; } seen = true;
     if (j.error) throw new Error('API 오류: ' + (j.error.message || '알 수 없는 오류'));
-    const c = (j.candidates || [])[0]; if (j.usageMetadata) usage = j.usageMetadata; if (j.promptFeedback) feedback = j.promptFeedback;
-    if (c) { if (c.finishReason) finish = c.finishReason; const add = ((c.content && c.content.parts) || []).filter(p => !p.thought).map(p => p.text || '').join(''); if (add) { text += add; try { onText(text); } catch (e) { /* 화면 갱신 실패는 무시 */ } } }
+    const c = (j.candidates || [])[0]; if (j.usageMetadata) usage = j.usageMetadata; if (j.promptFeedback) feedback = j.promptFeedback; if (!c) return;
+    if (c.finishReason) finish = c.finishReason; const parts = (c.content && c.content.parts) || [];
+    const th = parts.filter(p => p.thought).map(p => p.text || '').join(''), add = parts.filter(p => !p.thought).map(p => p.text || '').join('');
+    if (th) { thought += th; call(on.think, thought); } if (add) { text += add; call(on.text, text); }
   };
-  for (;;) { const { done, value } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split(/\r?\n/); buf = lines.pop(); lines.forEach(eat); }
+  for (;;) { const { done, value } = await rd.read(); if (done) break; call(on.beat); const chunk = dec.decode(value, { stream: true }); buf += chunk; if (!seen && raw.length < 4e6) raw += chunk; const lines = buf.split(/\r?\n/); buf = lines.pop(); lines.forEach(eat); }
   if (buf) eat(buf);
+  if (!seen) { try { let j = JSON.parse(raw); if (Array.isArray(j)) j = j[0]; if (j && typeof j === 'object') return j; } catch (e) { /* 아래의 빈 응답으로 처리 */ } } // 스트리밍이 아닌 한 덩어리로 온 경우
   return { candidates: [{ content: { parts: [{ text }] }, finishReason: finish }], usageMetadata: usage || {}, promptFeedback: feedback };
 }
-async function gemini({ system, contents, temp, kind, json, think, onText, signal }) {
+// 모든 요청은 스트리밍으로 받는다. 한 번에 받는 방식은 모델이 생각하는 몇 분 동안 연결에 아무것도 오가지 않아, 휴대폰 통신망이 연결을 조용히 끊으면 "생각하는 중"에서 영원히 멈췄다.
+// 그래서 ① 생각 요약도 함께 받아(includeThoughts) 연결에 계속 데이터가 흐르게 하고 ② STALL_MS 동안 아무것도 안 오면 스스로 끊고 오류를 알린다.
+const STALL_MS = 120000;
+async function gemini({ system, contents, temp, kind, json, think, onText, onThink, signal }) {
   const st = S.settings; if (!st.apiKey) { openSettings(); throw new Error('설정에서 Gemini API 키를 먼저 넣어 주세요.'); }
   const model = st.model.replace(/^models\//, '');
-  const stream = !!onText, url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
   const cats = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_CIVIC_INTEGRITY'];
   // 모델마다 허용하는 값이 달라 400이 나면 다음 조합으로 재시도한다. 어느 조합이든 "차단 없음"이다.
   const tries = [[cats, 'OFF'], [cats, 'BLOCK_NONE'], [cats.slice(0, 4), 'BLOCK_NONE']];
-  const lvAsk = think || st.think || 'auto'; let lv = lvAsk, last, ti = 0;
+  const lvAsk = think || st.think || 'auto'; let lv = lvAsk, last, ti = 0, inc = true;
   for (let guard = 0; guard < 8 && ti < tries.length; guard++) {
-    const [c, th] = tries[ti], tc = thinkCfg(model, lv);
-    const body = { contents, generationConfig: Object.assign({ temperature: temp ?? st.temp }, json ? { responseMimeType: 'application/json' } : {}, tc ? { thinkingConfig: tc } : {}), safetySettings: c.map(x => ({ category: x, threshold: th })) };
+    const [c, th] = tries[ti], tc = thinkCfg(model, lv), tcfg = inc ? Object.assign({ includeThoughts: true }, tc) : tc;
+    const body = { contents, generationConfig: Object.assign({ temperature: temp ?? st.temp }, json ? { responseMimeType: 'application/json' } : {}, tcfg ? { thinkingConfig: tcfg } : {}), safetySettings: c.map(x => ({ category: x, threshold: th })) };
     if (system) body.systemInstruction = { parts: [{ text: system }] };
-    const netErr = e => new Error(e && e.name === 'AbortError' ? '요청을 중단했습니다.' : '네트워크 오류: 인터넷 연결을 확인해 주세요. 응답을 기다리는 동안 앱을 다른 화면으로 바꾸거나 화면을 끄면 끊길 수 있습니다. (' + (e && e.message) + ')');
-    let res; try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': st.apiKey }, body: JSON.stringify(body), signal }); }
-    catch (e) { throw netErr(e); }
-    let j;
-    if (res.ok && stream && res.body && res.body.getReader) { try { j = await readSSE(res, onText); } catch (e) { throw /^API 오류/.test(e.message) ? e : netErr(e); } }
-    else { try { j = await res.json(); } catch (e) { j = {}; } if (Array.isArray(j)) j = j[0] || {}; }
+    const ctrl = window.AbortController ? new AbortController() : null; let stalled = false, timer = 0;
+    const beat = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; if (ctrl) ctrl.abort(); }, STALL_MS); };
+    const onAbort = () => { if (ctrl) ctrl.abort(); }; if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort); }
+    const netErr = e => new Error(stalled ? `응답이 ${STALL_MS / 1000}초 동안 오지 않아 중단했습니다. 통신이 끊겼거나 모델이 응답하지 않습니다. 다시 시도해 주세요. 계속 그러면 추론 단계를 낮추거나 "함께 보낼 자료"를 줄여 보세요.` : e && e.name === 'AbortError' ? '요청을 중단했습니다.' : '네트워크 오류: 인터넷 연결을 확인해 주세요. 응답을 기다리는 동안 앱을 다른 화면으로 바꾸거나 화면을 끄면 끊길 수 있습니다. (' + (e && e.message) + ')');
+    let res, j; beat();
+    try {
+      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': st.apiKey }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined }); beat();
+      if (res.ok && res.body && res.body.getReader) j = await readSSE(res, { text: onText, think: onThink, beat });
+      else { try { j = await res.json(); } catch (e) { j = {}; } if (Array.isArray(j)) j = j[0] || {}; }
+    } catch (e) { throw /^API 오류/.test(e.message) ? e : netErr(e); }
+    finally { clearTimeout(timer); if (signal) signal.removeEventListener('abort', onAbort); }
     if (!res.ok) {
       const em = (j.error && j.error.message) || ''; last = new Error(`API 오류 ${res.status}: ${em || '알 수 없는 오류'}${res.status === 404 ? ' — 설정에서 모델 이름을 확인해 주세요.' : res.status === 429 ? ' — 사용량 한도입니다. 잠시 뒤 다시 시도해 주세요.' : ''}`);
+      if (res.status === 400 && inc && /think|thought/i.test(em)) { inc = false; continue; } // 생각 요약을 주지 않는 모델
       if (res.status === 400 && tc && /think|budget|level|reason/i.test(em)) { lv = lv === 'minimal' ? 'low' : 'auto'; continue; } // 이 모델이 받지 않는 추론 단계
       if (res.status === 400 && /safety|threshold|categor|harm/i.test(em)) { ti++; continue; } throw last;
     }
@@ -720,15 +733,27 @@ const QUICK = [
 ];
 async function aiSend(text, kind = 'chat') {
   const w = W(); if (aiUI.busy || !text.trim()) return; const chat = w ? w.chat : (aiUI.loose = aiUI.loose || []);
-  chat.push({ role: 'user', text }); aiUI.busy = true; aiUI.draft = ''; renderAI();
+  const lv = aiUI.live = { t0: Date.now(), text: '', think: '', ctrl: window.AbortController ? new AbortController() : null };
+  chat.push({ role: 'user', text }); aiUI.busy = true; aiUI.draft = ''; renderAI(); const timer = setInterval(aiTick, 1000);
   try {
-    const hist = chat.slice(-13).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] })).filter((m, i, a) => !(i === 0 && m.role === 'model'));
+    const hist = chat.filter(m => m.role !== 'err').slice(-13).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] })).filter((m, i, a) => !(i === 0 && m.role === 'model'));
     if (kind === 'rand') hist[hist.length - 1].parts[0].text += `\n(무작위 시드: ${Math.floor(Math.random() * 99999)} — 이전 추천과 겹치지 않게)`;
-    const r = await gemini({ system: SYS_BASE + '\n\n아래는 제작자가 지금 편집 중인 자료다.\n' + buildContext(), contents: hist, kind: kind === 'rand' ? '추천' : '대화', temp: kind === 'rand' ? Math.max(S.settings.temp, 1.2) : undefined });
+    const r = await gemini({ system: SYS_BASE + '\n\n아래는 제작자가 지금 편집 중인 자료다.\n' + buildContext(), contents: hist, kind: kind === 'rand' ? '추천' : '대화', temp: kind === 'rand' ? Math.max(S.settings.temp, 1.2) : undefined,
+      signal: lv.ctrl ? lv.ctrl.signal : undefined, onText: t => { lv.text = t; aiTick(); }, onThink: t => { lv.think = t; aiTick(); } });
     chat.push({ role: 'model', text: r.text, usage: r.usage });
-  } catch (e) { chat.push({ role: 'err', text: e.message }); }
+  } catch (e) { if (lv.text.trim()) chat.push({ role: 'model', text: lv.text }); chat.push({ role: 'err', text: (lv.text.trim() ? '답변이 도중에 끊겼습니다. 위는 받은 데까지입니다.\n' : '') + e.message }); } // 받은 데까지는 남긴다
+  clearInterval(timer); aiUI.live = null;
   if (chat.length > 60) chat.splice(0, chat.length - 60);
   aiUI.busy = false; save(); renderAI();
+}
+// 대화 답변을 기다리는 동안: 경과 시간, 모델의 생각 요약(끝부분), 쓰고 있는 답을 그 자리에서 고쳐 보여 준다(창 전체를 다시 그리지 않음).
+function aiTick() {
+  const lv = aiUI.live, st = $('#aiStat'); if (!lv || !st) return; const sec = Math.round((Date.now() - lv.t0) / 1000), box = $('#ai .ai-b'), stick = box && box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  st.textContent = lv.text ? `답변 쓰는 중… ${nf(lv.text.length)}자 · ${sec}초` : `생각하는 중… ${sec}초`;
+  const th = $('#aiThought'), out = $('#aiLive');
+  if (th) { th.hidden = !!lv.text || !lv.think; if (!th.hidden) th.textContent = lv.think.replace(/\s+/g, ' ').slice(-160); }
+  if (out && lv.text) { out.hidden = false; out.textContent = lv.text; }
+  if (stick && box) box.scrollTop = box.scrollHeight;
 }
 
 // 압축
@@ -898,13 +923,14 @@ function openBuild() {
 function buildBusy() {
   modal(`<h3>아이디어로 프롬프트 구성</h3>
    <div class="msg model"><span class="spin"></span> <b id="buildStat">AI에게 보내는 중…</b><div class="hint">보통 1~3분 걸립니다. 이 창은 닫아도 계속 진행되고 끝나면 알려 드립니다. 다만 앱을 다른 화면으로 바꾸거나 화면을 끄면 끊길 수 있습니다.</div></div>
-   <pre class="code" id="buildLive" hidden></pre>
+   <div class="hint" id="buildThink" hidden></div><pre class="code" id="buildLive" hidden></pre>
    <div class="foot"><button class="btn" data-act="buildStop">중단</button><button class="btn" data-act="close">창 닫기 (계속 진행)</button></div>`, true);
   buildTick();
 }
 function buildTick() {
   const b = ui.build, st = $('#buildStat'); if (!b || !b.busy || !st) return; const sec = Math.round((Date.now() - b.t0) / 1000), n = (b.live || '').length;
   st.textContent = n ? `쓰는 중… ${nf(n)}자 받음 · ${sec}초` : `AI가 생각하는 중… ${sec}초`;
+  const th = $('#buildThink'); if (th) { th.hidden = !!n || !b.think; if (!th.hidden) th.textContent = b.think.replace(/\s+/g, ' ').slice(-200); }
   const lv = $('#buildLive'); if (lv && n) { lv.hidden = false; lv.textContent = b.live.slice(-600); lv.scrollTop = lv.scrollHeight; }
 }
 // 응답 읽기: "<<<섹션 | 이름>>>" 같은 표시 줄로 나눈다. 길고 따옴표·줄바꿈이 많은 글은 JSON 으로 받으면 깨지기 쉬워 이 형식을 쓴다.
@@ -958,10 +984,10 @@ async function runBuild() {
     if (v.subs.some(subOk)) skel += `\n\n[뼈대가 쓰는 치환 기호(원래 표현=기호) — 새 프롬프트에서도 같은 기호를 쓴다]\n` + v.subs.filter(subOk).map(r => `${r.long}=${r.short}`).join(' / ');
   }
   const req = `[새 작품] ${w.title}\n[소개] ${w.desc || '-'}\n\n[재료 — 아이디어 노트]\n${notes.map(n => '- ' + n.text.trim()).join('\n') || '(없음)'}\n\n[재료 — 마인드맵]\n${mind || '(없음)'}\n\n[뼈대]\n${skel}\n\n[요청]\n- 메인 프롬프트(켠 섹션 합계) 목표 약 ${b.target}자, 절대 ${L.MAIN}자 초과 금지.\n- 로어북: ${b.kb ? `필요한 만큼(최대 ${L.KBN}슬롯), 슬롯당 ${L.KBC}자 이하.` : '만들지 않는다(빈 배열).'}\n- 시작상황: ${b.st ? `1~${L.STN}개, 첫 장면 ${L.STC}자·서브 컨텍스트 ${L.SUB}자 이하.` : '만들지 않는다(빈 배열).'}${b.extra.trim() ? '\n- 추가 요청: ' + b.extra.trim() : ''}`;
-  b.busy = true; b.err = ''; b.res = null; b.live = ''; b.t0 = Date.now(); b.ctrl = window.AbortController ? new AbortController() : null; openBuild();
+  b.busy = true; b.err = ''; b.res = null; b.live = ''; b.think = ''; b.t0 = Date.now(); b.ctrl = window.AbortController ? new AbortController() : null; openBuild();
   const timer = setInterval(buildTick, 1000);
   try {
-    const r = await gemini({ system: SYS_BUILD, temp: 0.7, kind: '프롬프트 구성', contents: [{ role: 'user', parts: [{ text: req }] }], signal: b.ctrl ? b.ctrl.signal : undefined, onText: t => { b.live = t; buildTick(); } });
+    const r = await gemini({ system: SYS_BUILD, temp: 0.7, kind: '프롬프트 구성', contents: [{ role: 'user', parts: [{ text: req }] }], signal: b.ctrl ? b.ctrl.signal : undefined, onText: t => { b.live = t; buildTick(); }, onThink: t => { b.think = t; buildTick(); } });
     b.res = Object.assign(buildParse(r.text), { usage: r.usage, srcKey: b.src, wantKb: b.kb, wantSt: b.st }); b.res.cut = r.finish === 'MAX_TOKENS' || !b.res.done;
   } catch (e) {
     b.err = e.message;
@@ -1020,7 +1046,7 @@ function renderAI() {
       <div class="quick">${QUICK.map((q, i) => `<button data-act="quick" data-id="${i}">${q[0]}</button>`).join('')}</div>
       ${chat.length ? '' : `<div class="note">${S.settings.apiKey ? '위 버튼을 누르거나 아래에 직접 물어보세요. 검수 전에 작품 정보 탭의 "의도 메모"에 일부러 그렇게 쓴 부분을 적어 두면 그 부분은 지적하지 않습니다.' : '먼저 설정에서 Gemini API 키를 넣어 주세요.'}</div>`}
       ${chat.map((m, i) => `<div class="msg ${m.role}">${m.role === 'model' ? md(m.text) : esc(m.text)}${m.usage ? `<div class="usage">${costStr(m.usage)}<button class="btn sm" data-act="msgCopy" data-id="${i}">복사</button>${w ? `<button class="btn sm" data-act="msgNote" data-id="${i}">아이디어에 저장</button>` : ''}</div>` : ''}</div>`).join('')}
-      ${aiUI.busy ? '<div class="msg model"><span class="spin"></span> 생각하는 중…</div>' : ''}`;
+      ${aiUI.busy ? '<div class="msg model"><div class="row"><span><span class="spin"></span> <b id="aiStat">생각하는 중…</b></span><span class="grow"></span><button class="btn sm" data-act="aiStop">중단</button></div><div class="hint" id="aiThought" hidden></div><div id="aiLive" hidden></div></div>' : ''}`;
     foot = `<textarea rows="3" id="aiIn" placeholder="물어볼 내용 (Ctrl+Enter로 보내기)" style="font-family:var(--font)">${esc(aiUI.draft)}</textarea><div class="row"><button class="btn sm" data-act="aiClear">대화 비우기</button><span class="grow"></span><button class="btn accent" data-act="aiSend" ${aiUI.busy ? 'disabled' : ''}>보내기</button></div>`;
   } else if (aiUI.tab === 'cmp') {
     const ts = cmpTargets(), c = aiUI.cmp, groups = CMP_ALL.filter(([k]) => cmpGroup(k).length);
@@ -1336,7 +1362,8 @@ const A = {
   aiTab(el) { aiUI.tab = el.dataset.id; renderAI(); },
   quick(el) { const q = QUICK[+el.dataset.id]; if (q[1] === 'fill') { aiUI.draft = q[2]; renderAI(); const t = $('#aiIn'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } else aiSend(q[2], q[1]); },
   aiSend() { aiSend($('#aiIn').value); },
-  aiClear() { const w = W(); if (!confirm('이 작품의 AI 대화를 모두 지울까요?')) return; if (w) w.chat = []; else aiUI.loose = []; save(); renderAI(); },
+  aiStop() { const lv = aiUI.live; if (lv && lv.ctrl) lv.ctrl.abort(); },
+  aiClear() { if (aiUI.busy) { toast('답변을 받는 중입니다. 먼저 중단해 주세요'); return; } const w = W(); if (!confirm('이 작품의 AI 대화를 모두 지울까요?')) return; if (w) w.chat = []; else aiUI.loose = []; save(); renderAI(); },
   msgCopy(el) { const w = W(); copy((w ? w.chat : aiUI.loose)[+el.dataset.id].text); },
   msgNote(el) { const w = W(); w.notes.unshift({ id: uid(), text: w.chat[+el.dataset.id].text, c: 3 }); save(); toast('아이디어 노트에 저장했습니다'); if (ui.tab === 'ideas') render(); },
   cmpRun() { aiUI.cmpTarget = $('#cmpTarget').value; aiUI.cmp = null; runCompress(); },
